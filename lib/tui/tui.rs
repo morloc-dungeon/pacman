@@ -67,40 +67,83 @@ mod pac_tui_impl {
         }
     }
 
-    // How a tile is drawn. Each tile is two columns wide: a terminal cell is
-    // about twice as tall as it is wide, so a one-column tile makes the board
-    // look stretched. Walls fill both columns; everything else is a glyph
-    // followed by a space, which also gives the dots their arcade spacing.
-    fn tile(c: char) -> (&'static str, Style) {
+    // How a tile is drawn. A terminal cell is about twice as tall as it is
+    // wide, so a tile gets two columns where there is room for them and the
+    // board keeps its proportions; the one-column forms are the fallback for a
+    // narrow window. Walls fill their columns; everything else is a glyph and a
+    // space, which also gives the dots their arcade spacing.
+    fn tile(c: char, wide: bool) -> (&'static str, Style) {
         let pac = Style::default()
             .fg(Color::Rgb(255, 255, 0))
             .add_modifier(Modifier::BOLD);
         let pellet = Style::default().fg(Color::Rgb(255, 214, 170));
-        match c {
-            '#' => ("\u{2588}\u{2588}", Style::default().fg(Color::Rgb(33, 33, 222))),
-            '.' => ("\u{b7} ", pellet),
-            'o' => ("\u{25cf} ", pellet.add_modifier(Modifier::BOLD)),
-            '-' => ("\u{2500}\u{2500}", Style::default().fg(Color::Rgb(255, 184, 255))),
-            '^' => ("\u{25b2} ", pac),
-            'v' => ("\u{25bc} ", pac),
-            '<' => ("\u{25c4} ", pac),
-            '>' => ("\u{25ba} ", pac),
-            'B' => ("\u{15e3} ", Style::default().fg(Color::Rgb(255, 0, 0))),
-            'P' => ("\u{15e3} ", Style::default().fg(Color::Rgb(255, 184, 255))),
-            'I' => ("\u{15e3} ", Style::default().fg(Color::Rgb(0, 255, 222))),
-            'C' => ("\u{15e3} ", Style::default().fg(Color::Rgb(255, 184, 82))),
+        let (w2, w1, style) = match c {
+            '#' => ("\u{2588}\u{2588}", "\u{2588}", Style::default().fg(Color::Rgb(33, 33, 222))),
+            '.' => ("\u{b7} ", "\u{b7}", pellet),
+            'o' => ("\u{25cf} ", "\u{25cf}", pellet.add_modifier(Modifier::BOLD)),
+            '-' => ("\u{2500}\u{2500}", "\u{2500}", Style::default().fg(Color::Rgb(255, 184, 255))),
+            '^' => ("\u{25b2} ", "\u{25b2}", pac),
+            'v' => ("\u{25bc} ", "\u{25bc}", pac),
+            '<' => ("\u{25c4} ", "\u{25c4}", pac),
+            '>' => ("\u{25ba} ", "\u{25ba}", pac),
+            'B' => ("\u{15e3} ", "\u{15e3}", Style::default().fg(Color::Rgb(255, 0, 0))),
+            'P' => ("\u{15e3} ", "\u{15e3}", Style::default().fg(Color::Rgb(255, 184, 255))),
+            'I' => ("\u{15e3} ", "\u{15e3}", Style::default().fg(Color::Rgb(0, 255, 222))),
+            'C' => ("\u{15e3} ", "\u{15e3}", Style::default().fg(Color::Rgb(255, 184, 82))),
             'F' => (
                 "\u{15e3} ",
+                "\u{15e3}",
                 Style::default()
                     .fg(Color::Rgb(33, 33, 222))
                     .add_modifier(Modifier::BOLD),
             ),
-            '"' => ("\u{a8} ", Style::default().fg(Color::White)),
-            _ => ("  ", Style::default()),
-        }
+            '"' => ("\u{a8} ", "\u{a8}", Style::default().fg(Color::White)),
+            _ => ("  ", " ", Style::default()),
+        };
+        (if wide { w2 } else { w1 }, style)
     }
 
-    fn board_lines(frame: &crate::PacFrame) -> Vec<Line<'static>> {
+    const KEYS: &str = "arrows or hjkl move    s save and quit    q quit";
+    const KEYS_SHORT: &str = "hjkl move  s save  q quit";
+
+    // What the board is allowed to drop when the window is short. The maze
+    // itself is fixed, so these are the only rows there are to give back.
+    // Ordered by what is least missed: the blank line under the board, then the
+    // frame, then the key legend (which first compresses onto the status line
+    // rather than vanishing). The first layout that fits is used.
+    #[derive(Clone, Copy)]
+    struct Layout {
+        wide: bool,
+        border: bool,
+        spacer: bool,
+        footer: bool,
+        hint: bool,
+    }
+
+    const TRIMS: [(bool, bool, bool, bool); 6] = [
+        (true, true, true, false),
+        (true, false, true, false),
+        (false, true, true, false),
+        (false, false, true, false),
+        (false, false, false, true),
+        (false, false, false, false),
+    ];
+
+    // Rows and columns a layout needs, without building it.
+    fn extent(frame: &crate::PacFrame, lay: Layout) -> (u16, u16) {
+        let board_w = frame.rows.iter().map(|r| r.chars().count()).max().unwrap_or(0)
+            * if lay.wide { 2 } else { 1 };
+        let status_w = frame.status.chars().count()
+            + if lay.hint { KEYS_SHORT.chars().count() + 3 } else { 0 };
+        let footer_w = if lay.footer { KEYS.chars().count() } else { 0 };
+        let content_w = board_w.max(status_w).max(footer_w);
+        let content_h =
+            frame.rows.len() + 1 + usize::from(lay.spacer) + usize::from(lay.footer);
+        let pad = if lay.border { 2 } else { 0 };
+        ((content_w + pad) as u16, (content_h + pad) as u16)
+    }
+
+    fn board_lines(frame: &crate::PacFrame, lay: Layout) -> Vec<Line<'static>> {
         let mut out: Vec<Line> = frame
             .rows
             .iter()
@@ -108,54 +151,75 @@ mod pac_tui_impl {
                 Line::from(
                     row.chars()
                         .map(|c| {
-                            let (glyph, style) = tile(c);
+                            let (glyph, style) = tile(c, lay.wide);
                             Span::styled(glyph, style)
                         })
                         .collect::<Vec<Span>>(),
                 )
             })
             .collect();
-        out.push(Line::from(""));
+        if lay.spacer {
+            out.push(Line::from(""));
+        }
+        // With no room for the legend, the keys join the status line rather than
+        // leaving the player nothing to read.
+        let status = if lay.hint {
+            format!("{}   {}", frame.status, KEYS_SHORT)
+        } else {
+            frame.status.clone()
+        };
         out.push(Line::styled(
-            frame.status.clone(),
+            status,
             Style::default()
                 .fg(Color::Rgb(255, 255, 0))
                 .add_modifier(Modifier::BOLD),
         ));
-        out.push(Line::styled(
-            String::from("arrows or hjkl move    s save and quit    q quit"),
-            Style::default().fg(Color::DarkGray),
-        ));
+        if lay.footer {
+            out.push(Line::styled(
+                String::from(KEYS),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
         out
     }
 
     fn draw(f: &mut ratatui::Frame, frame: &crate::PacFrame) {
-        let lines = board_lines(frame);
-        let widest = lines.iter().map(|l| l.width()).max().unwrap_or(0);
-        let w = (widest as u16) + 2;
-        let h = (lines.len() as u16) + 2;
         let area = f.area();
-        if area.width < w || area.height < h {
-            f.render_widget(
-                Paragraph::new(format!(
-                    "the board needs {} columns by {} rows; this window is {} by {}",
-                    w, h, area.width, area.height
-                ))
-                .alignment(Alignment::Center),
-                area,
-            );
-            return;
+        for (border, spacer, footer, hint) in TRIMS {
+            let lay = Layout { wide: true, border, spacer, footer, hint };
+            for lay in [lay, Layout { wide: false, ..lay }] {
+                let (w, h) = extent(frame, lay);
+                if w > area.width || h > area.height {
+                    continue;
+                }
+                let rect = Rect {
+                    x: area.x + (area.width - w) / 2,
+                    y: area.y + (area.height - h) / 2,
+                    width: w,
+                    height: h,
+                };
+                let body = Paragraph::new(board_lines(frame, lay)).alignment(Alignment::Center);
+                let body = if lay.border {
+                    body.block(Block::default().borders(Borders::ALL).title(" PAC-MAN "))
+                } else {
+                    body
+                };
+                f.render_widget(body, rect);
+                return;
+            }
         }
-        let rect = Rect {
-            x: area.x + area.width.saturating_sub(w) / 2,
-            y: area.y + area.height.saturating_sub(h) / 2,
-            width: w.min(area.width),
-            height: h.min(area.height),
-        };
-        let body = Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title(" PAC-MAN "));
-        f.render_widget(body, rect);
+        let (w, h) = extent(
+            frame,
+            Layout { wide: false, border: false, spacer: false, footer: false, hint: false },
+        );
+        f.render_widget(
+            Paragraph::new(format!(
+                "pac-man needs {} columns by {} rows; this window is {} by {}",
+                w, h, area.width, area.height
+            ))
+            .alignment(Alignment::Center),
+            area,
+        );
     }
 
     // A key name the engine's `keyOf` understands. Anything else maps to a

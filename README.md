@@ -83,6 +83,13 @@ Arrows or `hjkl` to move, `s` to save and quit, `q` to quit without saving.
 The board is drawn two terminal columns per tile, because a cell is about twice
 as tall as it is wide and a one-column tile looks stretched. Which glyph stands
 for which tile is a frontend decision -- the engine returns a tile map.
+
+The maze is 31 rows and that is not negotiable, so the window needs 32 rows and
+40 columns at the very least. Above that the frontend spends what it has: the
+blank line under the board, then the frame, then the key legend (which
+compresses onto the status line before it disappears) are given back as the
+window shrinks. Below the minimum it says what it needs rather than drawing a
+clipped board.
 A saved game is the `GameState` record written by `@save`, so it is an ordinary
 morloc object -- `pacman-test showSave` reads one back and prints the board.
 

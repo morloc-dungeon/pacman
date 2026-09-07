@@ -4,6 +4,7 @@
 /pacman-test-build/
 /pacman-tui-test
 /pacman-tui-test-build/
+*build.tmp*
 /pacman.sav
 /test/obs.txt
 /test/rt.sav
