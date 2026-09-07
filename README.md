@@ -56,7 +56,7 @@ Because everything crossing that boundary is pure and total, the same engine
 drives the interactive game, the test suite, and the off-screen renderer with
 no conditional compilation and no test doubles.
 
-## Levels are a plugin
+## Levels are plugins
 
 The map for a level is one function:
 
@@ -85,6 +85,26 @@ the current one is. It has already earned its keep: it caught a generated map
 that put a dot on Pac-Man's starting tile but not on its mirror, which no
 eyeball would have noticed.
 
+How hard a level plays is its own function, of the same shape:
+
+```morloc
+levelDifficulty :: Int -> Difficulty
+```
+
+It returns everything that changes with the level number and nothing that does
+not -- how often a ghost drops a frame, how long an energizer frightens, how
+long the ghosts wait in the house, how the scatter and chase phases divide up.
+Swap it and you have retuned the whole game without touching the rules, and
+`difficultyProblems` guards it the way `mazeProblems` guards a map. Level one
+returns the arcade's opening pace exactly, which is how the suite can tell that
+introducing a curve changed nothing about the board everyone already knows.
+
+The two are deliberately independent, and both are independent of the rules. A
+map does not know how fast the ghosts are, a difficulty does not know what the
+maze looks like, and neither knows what happens when Pac-Man meets a ghost.
+Replace one and you have a plugin; replace them all and you have a different
+game on the same engine.
+
 ## What it plays
 
 The arcade first level: the real 28x31 maze, 240 dots and 4 energizers, four
@@ -93,10 +113,13 @@ ahead, Inky takes the doubled vector from Blinky, Clyde breaks off within eight
 tiles), the scatter/chase schedule with its forced reversals, frightened mode,
 the ghost house, and the side tunnel.
 
-Deliberately not included: levels past the first, fruit, the arcade's per-ghost
-dot counters for leaving the house (fixed timers instead), and its fractional
-speed tables (Pac moves every frame, ghosts three frames in four, frightened
-ghosts one in two, eyes every frame). Nothing is random except which way a
+Levels after the first keep those rules and change the pace: the ghosts drop
+fewer frames, the house empties sooner, the scatter breaks shorten, and an
+energizer frightens for less until, from the thirteenth board, it only scores.
+
+Deliberately not included: fruit, the arcade's per-ghost dot counters for
+leaving the house (fixed timers instead), and its fractional speed tables (a
+ghost either takes a frame or does not). Nothing is random except which way a
 frightened ghost turns, and that runs off a seed in the game state, so a game
 replays exactly.
 

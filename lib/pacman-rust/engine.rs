@@ -38,6 +38,15 @@ pub struct PacState {
 }
 
 #[derive(Clone)]
+pub struct PacDifficulty {
+    pub ghostSkip: i64,
+    pub frightMove: i64,
+    pub frightTicks: i64,
+    pub release: Vec<i64>,
+    pub phases: Vec<i64>,
+}
+
+#[derive(Clone)]
 pub struct PacFrame {
     pub rows: Vec<String>,
     pub status: String,
@@ -80,25 +89,83 @@ const PAC_SCATTER: [(i64, i64); 4] = [(0, 25), (0, 2), (30, 27), (30, 0)];
 // tick command at this rate.
 pub const PAC_TPS: i64 = 8;
 
-// Scatter/chase durations in ticks, alternating scatter first. The last entry
-// is chase forever.
-const PAC_PHASES: [i64; 8] = [
-    7 * PAC_TPS,
-    20 * PAC_TPS,
-    7 * PAC_TPS,
-    20 * PAC_TPS,
-    5 * PAC_TPS,
-    20 * PAC_TPS,
-    5 * PAC_TPS,
-    i64::MAX,
-];
+// ---------------------------------------------------------------------------
+// The difficulty curve
+//
+// One function of the level number. Level one reproduces the arcade's opening
+// pace exactly; after that the ghosts quicken, the house empties sooner, the
+// scatter breaks shorten, and an energizer frightens for less and less until it
+// stops frightening at all. Nothing here knows what the board looks like.
 
-const PAC_FRIGHT_TICKS: i64 = 6 * PAC_TPS;
+pub fn pac_level_difficulty(level: i64) -> PacDifficulty {
+    let l = level.max(1);
+    // A hunting ghost loses one frame in four at first, then one in six, one in
+    // eight, and finally none. It never gets a turn Pac-Man does not.
+    let ghost_skip = if l >= 13 {
+        0
+    } else if l >= 6 {
+        8
+    } else if l >= 3 {
+        6
+    } else {
+        4
+    };
+    // Frightened ghosts stay slow however deep the game gets; what changes is
+    // how long they stay frightened.
+    let fright_move = 2;
+    let fright_ticks = (6 * PAC_TPS - 4 * (l - 1)).max(0);
+    let wait = (4 * PAC_TPS - 3 * (l - 1)).max(0);
+    let long_scatter = (7 * PAC_TPS - 4 * (l - 1)).max(PAC_TPS);
+    let short_scatter = (5 * PAC_TPS - 4 * (l - 1)).max(PAC_TPS);
+    let chase = 20 * PAC_TPS;
+    PacDifficulty {
+        ghostSkip: ghost_skip,
+        frightMove: fright_move,
+        frightTicks: fright_ticks,
+        release: vec![0, 0, wait, 2 * wait],
+        phases: vec![
+            long_scatter,
+            chase,
+            long_scatter,
+            chase,
+            short_scatter,
+            chase,
+            short_scatter,
+            i64::MAX,
+        ],
+    }
+}
 
-// Ticks each ghost waits in the house before leaving.
-const PAC_RELEASE: [i64; 4] = [0, 0, 4 * PAC_TPS, 8 * PAC_TPS];
+pub fn pac_difficulty_problems(d: &PacDifficulty) -> Vec<String> {
+    let mut bad: Vec<String> = Vec::new();
+    if d.ghostSkip == 1 {
+        bad.push(String::from("a ghost that skips every frame never moves"));
+    }
+    if d.ghostSkip < 0 {
+        bad.push(format!("ghostSkip is {}, want zero or more", d.ghostSkip));
+    }
+    if d.frightMove < 1 {
+        bad.push(format!("frightMove is {}, want one or more", d.frightMove));
+    }
+    if d.frightTicks < 0 {
+        bad.push(format!("frightTicks is {}, want zero or more", d.frightTicks));
+    }
+    if d.release.len() != 4 {
+        bad.push(format!("{} release times, want one per ghost", d.release.len()));
+    }
+    if d.release.iter().any(|w| *w < 0) {
+        bad.push(String::from("a ghost is released before the game starts"));
+    }
+    if d.phases.len() < 2 {
+        bad.push(String::from("too few scatter and chase phases to alternate"));
+    }
+    if d.phases.iter().any(|p| *p <= 0) {
+        bad.push(String::from("a phase lasts no time at all"));
+    }
+    bad
+}
 
-// Left half of every maze row. The right half is the mirror image.
+// Left half of every maze row.// Left half of every maze row. The right half is the mirror image.
 const PAC_MAZE_HALF: [&str; 31] = [
     "##############",
     "#............#",
@@ -392,12 +459,13 @@ fn pac_rand(seed: i64) -> i64 {
 // ---------------------------------------------------------------------------
 // Construction
 
-fn pac_start_ghosts() -> Vec<PacGhost> {
+fn pac_start_ghosts(d: &PacDifficulty) -> Vec<PacGhost> {
+    let wait = |i: usize| *d.release.get(i).unwrap_or(&0);
     vec![
-        PacGhost { pos: PAC_DOOR_OUT, dir: 1, kind: 0, state: 1, timer: 0 },
-        PacGhost { pos: (14, 13), dir: 0, kind: 1, state: 0, timer: PAC_RELEASE[1] },
-        PacGhost { pos: (14, 11), dir: 0, kind: 2, state: 0, timer: PAC_RELEASE[2] },
-        PacGhost { pos: (14, 16), dir: 0, kind: 3, state: 0, timer: PAC_RELEASE[3] },
+        PacGhost { pos: PAC_DOOR_OUT, dir: 1, kind: 0, state: 1, timer: wait(0) },
+        PacGhost { pos: (14, 13), dir: 0, kind: 1, state: 0, timer: wait(1) },
+        PacGhost { pos: (14, 11), dir: 0, kind: 2, state: 0, timer: wait(2) },
+        PacGhost { pos: (14, 16), dir: 0, kind: 3, state: 0, timer: wait(3) },
     ]
 }
 
@@ -412,7 +480,7 @@ pub fn pac_new_game(lives: i64) -> PacState {
         pac: PAC_PAC_START,
         dir: 1,
         want: 1,
-        ghosts: pac_start_ghosts(),
+        ghosts: pac_start_ghosts(&pac_level_difficulty(1)),
         score: 0,
         lives,
         pellets,
@@ -441,7 +509,7 @@ fn pac_next_level(s: &PacState) -> PacState {
         pac: PAC_PAC_START,
         dir: 1,
         want: 1,
-        ghosts: pac_start_ghosts(),
+        ghosts: pac_start_ghosts(&pac_level_difficulty(level)),
         score: s.score,
         lives: s.lives,
         pellets,
@@ -518,11 +586,11 @@ fn pac_target(g: &PacGhost, s: &PacState, blinky: (i64, i64), scatter: bool) -> 
 
 // Should this ghost move on this tick? Hunting ghosts run at three quarters
 // speed, frightened ghosts at half, and eyes at full.
-fn pac_ghost_moves(g: &PacGhost, ticks: i64) -> bool {
+fn pac_ghost_moves(g: &PacGhost, ticks: i64, d: &PacDifficulty) -> bool {
     match g.state {
-        2 => ticks % 2 == 0,
+        2 => d.frightMove <= 1 || ticks % d.frightMove == 0,
         3 => true,
-        _ => ticks % 4 != 0,
+        _ => d.ghostSkip <= 0 || ticks % d.ghostSkip != 0,
     }
 }
 
@@ -601,7 +669,7 @@ fn pac_reset_positions(s: &mut PacState) {
     s.pac = PAC_PAC_START;
     s.dir = 1;
     s.want = 1;
-    s.ghosts = pac_start_ghosts();
+    s.ghosts = pac_start_ghosts(&pac_level_difficulty(s.level));
     s.fright = 0;
     s.chain = 0;
     s.phase = 0;
@@ -615,14 +683,15 @@ fn pac_touching(before: (i64, i64), after: (i64, i64), gb: (i64, i64), ga: (i64,
 }
 
 fn pac_tick(s: &PacState) -> PacState {
+    let d = pac_level_difficulty(s.level);
     let mut out = s.clone();
     out.ticks = s.ticks + 1;
 
     // Scatter/chase schedule. A phase change reverses every hunting ghost.
     let mut phase_elapsed = out.ticks;
     let mut phase = 0usize;
-    while phase < PAC_PHASES.len() - 1 && phase_elapsed > PAC_PHASES[phase] {
-        phase_elapsed -= PAC_PHASES[phase];
+    while phase < d.phases.len() - 1 && phase_elapsed > d.phases[phase] {
+        phase_elapsed -= d.phases[phase];
         phase += 1;
     }
     let reversed = (phase as i64) != s.phase;
@@ -664,12 +733,15 @@ fn pac_tick(s: &PacState) -> PacState {
         out.pellets -= 1;
         if tile == 'o' {
             out.score += 50;
-            out.fright = PAC_FRIGHT_TICKS;
+            out.fright = d.frightTicks;
             out.chain = 0;
-            for g in out.ghosts.iter_mut() {
-                if g.state == 1 {
-                    g.state = 2;
-                    g.dir = (g.dir + 2) % 4;
+            // Deep in the game an energizer is worth points and nothing else.
+            if d.frightTicks > 0 {
+                for g in out.ghosts.iter_mut() {
+                    if g.state == 1 {
+                        g.state = 2;
+                        g.dir = (g.dir + 2) % 4;
+                    }
                 }
             }
         } else {
@@ -687,7 +759,7 @@ fn pac_tick(s: &PacState) -> PacState {
         if reversed && (g2.state == 1 || g2.state == 2) {
             g2.dir = (g2.dir + 2) % 4;
         }
-        if pac_ghost_moves(&g2, out.ticks) {
+        if pac_ghost_moves(&g2, out.ticks, &d) {
             seed = pac_rand(seed);
             moved.push(pac_move_ghost(&g2, &out, blinky, scatter, seed));
         } else {

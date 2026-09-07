@@ -69,6 +69,24 @@ record GameState where
   savefile :: Str
   level :: Int
 
+--' How hard a level plays. Everything that changes with the level number and
+--' nothing that does not: the maze is a separate matter, and the rules are the
+--' same on every board.
+record Difficulty where
+  --' A hunting ghost stands still on every Nth frame. Zero means it never
+  --' does, which is full speed; one would freeze it, so one is not allowed.
+  ghostSkip :: Int
+  --' A frightened ghost moves on every Nth frame, so larger is slower.
+  frightMove :: Int
+  --' How long an energizer frightens, in frames. Zero means it scores and
+  --' nothing more, which is where the arcade ends up deep in a game.
+  frightTicks :: Int
+  --' Frames each ghost waits in the house before leaving, one per ghost.
+  release :: [Int]
+  --' Scatter and chase durations in frames, alternating, scatter first. The
+  --' last is however long the game has left.
+  phases :: [Int]
+
 --' One drawable frame. The engine decides what the screen says; a frontend
 --' only paints it.
 record Frame where
@@ -98,6 +116,15 @@ newGame :: Int -> GameState
 --' after it is generated from its number, so the same number always gives the
 --' same map. A map it returns always satisfies `mazeProblems`.
 makeMaze :: Int -> [Str]
+
+--' How a level plays. Level one is the arcade's opening pace; later levels get
+--' harder. Like `makeMaze`, this is one function of the level number, so the
+--' whole difficulty curve is a plugin. A value it returns always satisfies
+--' `difficultyProblems`.
+levelDifficulty :: Int -> Difficulty
+
+--' Everything wrong with a difficulty, empty when it can be played.
+difficultyProblems :: Difficulty -> [Str]
 
 --' Everything wrong with a map, empty when it is fit to play. This is the
 --' definition of a valid map, so a generator can be checked against it and a

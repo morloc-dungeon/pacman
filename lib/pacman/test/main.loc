@@ -33,6 +33,7 @@ runTests =
   . testGroup "Ending" testEnding
   . testGroup "Levels" testLevels
   . testGroup "Progress" testProgress
+  . testGroup "Difficulty" testDifficulty
   )
 
 -------------------------------------------------------------------------------
@@ -233,4 +234,27 @@ testProgress =
   . testEqual "and the game is running" (.outcome nextLevel) 0
   . testEqual "continuing a running game does nothing" (.level (runCommands [cmdContinue] start)) 1
   . testEqual "nor does continuing a lost one" (.level (runCommands [cmdContinue] lost)) 1
+  )
+
+--' The difficulty curve is a plugin like the map generator, so it is checked
+--' the same way: against the rule that says what a playable difficulty is, and
+--' against what it actually does to a game rather than only what it returns.
+
+--' Hold left on a board, with the level number set and the level-one map, so
+--' only the pace differs between the runs.
+heldAt :: Int -> Int -> GameState
+heldAt lvl n = runCommands (replicate n cmdTick) (runCommands [cmdLeft] (.(.level = lvl) start))
+
+testDifficulty :: (Int, Int) -> (Int, Int)
+testDifficulty =
+  ( testEqual "every level can be played" (map (\n -> size (difficultyProblems (levelDifficulty n))) levels) (map (\_ -> (0 :: U64)) levels)
+  . testEqual "level one loses a frame in four" (.ghostSkip (levelDifficulty 1)) 4
+  . testEqual "and frightens for six seconds" (.frightTicks (levelDifficulty 1)) 48
+  . testEqual "the fright shortens as the game goes on" (map (\n -> .frightTicks (levelDifficulty n)) [1, 2, 3, 5, 9]) [48, 44, 40, 32, 16]
+  . testEqual "until an energizer only scores" (.frightTicks (levelDifficulty 13)) 0
+  . testEqual "by which point the ghosts drop no frames" (.ghostSkip (levelDifficulty 13)) 0
+  . testEqual "a ghost that skips every frame is reported" (size (difficultyProblems (.(.ghostSkip = 1) (levelDifficulty 1)))) (1 :: U64)
+  . testEqual "so is a phase that lasts no time" ((size (difficultyProblems (.(.phases = [0, 8]) (levelDifficulty 1)))) > 0) True
+  . testEqual "and it reaches the game: later levels kill sooner" (map (\lvl -> .lives (heldAt lvl 90)) [1, 3, 6, 13]) [3, 2, 2, 1]
+  . testEqual "level one plays as it always did" (.lives (heldAt 1 300)) (.lives (held 300))
   )

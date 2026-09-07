@@ -12,6 +12,7 @@ import root-rust
 record Rust => Ghost = "PacGhost"
 record Rust => GameState = "PacState"
 record Rust => Frame = "PacFrame"
+record Rust => Difficulty = "PacDifficulty"
 record Rust => PacmanCommands = "PacCommands"
 
 source Rust from "engine.rs"
@@ -22,6 +23,8 @@ source Rust from "engine.rs"
   , "pac_with_save_file" as withSaveFile
   , "pac_make_maze" as makeMaze
   , "pac_maze_problems" as mazeProblems
+  , "pac_level_difficulty" as levelDifficulty
+  , "pac_difficulty_problems" as difficultyProblems
   , "pac_to_save" as toSave
   , "pac_each" as eachE
   )
