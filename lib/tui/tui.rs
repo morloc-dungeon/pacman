@@ -131,33 +131,80 @@ mod pac_tui_impl {
 
     // Rows and columns a layout needs, without building it.
     fn extent(frame: &crate::PacFrame, lay: Layout) -> (u16, u16) {
-        let board_w = frame.rows.iter().map(|r| r.chars().count()).max().unwrap_or(0)
-            * if lay.wide { 2 } else { 1 };
-        let status_w = frame.status.chars().count()
-            + if lay.hint { KEYS_SHORT.chars().count() + 3 } else { 0 };
-        let footer_w = if lay.footer { KEYS.chars().count() } else { 0 };
-        let content_w = board_w.max(status_w).max(footer_w);
-        let content_h =
-            frame.rows.len() + 1 + usize::from(lay.spacer) + usize::from(lay.footer);
+        let (body_rows, body_w) = if frame.message.is_empty() {
+            (
+                frame.rows.len(),
+                frame.rows.iter().map(|r| r.chars().count()).max().unwrap_or(0)
+                    * if lay.wide { 2 } else { 1 },
+            )
+        } else {
+            (
+                frame.message.len(),
+                frame.message.iter().map(|m| m.chars().count()).max().unwrap_or(0),
+            )
+        };
+        let board_w = body_w;
+        let status_w = if frame.message.is_empty() {
+            frame.status.chars().count()
+                + if lay.hint { KEYS_SHORT.chars().count() + 3 } else { 0 }
+        } else {
+            0
+        };
+        let footer_w = if lay.footer && frame.message.is_empty() {
+            KEYS.chars().count()
+        } else {
+            0
+        };
+        // A message sits in its own small box, so it gets a margin the board
+        // (which fills its frame edge to edge) does not want.
+        let content_w = board_w.max(status_w).max(footer_w)
+            + if frame.message.is_empty() { 0 } else { 4 };
+        // The end screen says everything the status line and legend would, so it
+        // stands alone.
+        let content_h = if frame.message.is_empty() {
+            body_rows + 1 + usize::from(lay.spacer) + usize::from(lay.footer)
+        } else {
+            body_rows
+        };
         let pad = if lay.border { 2 } else { 0 };
         ((content_w + pad) as u16, (content_h + pad) as u16)
     }
 
     fn board_lines(frame: &crate::PacFrame, lay: Layout) -> Vec<Line<'static>> {
-        let mut out: Vec<Line> = frame
-            .rows
-            .iter()
-            .map(|row| {
-                Line::from(
-                    row.chars()
-                        .map(|c| {
-                            let (glyph, style) = tile(c, lay.wide);
-                            Span::styled(glyph, style)
-                        })
-                        .collect::<Vec<Span>>(),
-                )
-            })
-            .collect();
+        // A message is literal text; the board is a map of tiles. Running the
+        // one through the other's renderer turns words into ghosts.
+        let mut out: Vec<Line> = if frame.message.is_empty() {
+            frame
+                .rows
+                .iter()
+                .map(|row| {
+                    Line::from(
+                        row.chars()
+                            .map(|c| {
+                                let (glyph, style) = tile(c, lay.wide);
+                                Span::styled(glyph, style)
+                            })
+                            .collect::<Vec<Span>>(),
+                    )
+                })
+                .collect()
+        } else {
+            frame
+                .message
+                .iter()
+                .map(|m| {
+                    Line::styled(
+                        m.clone(),
+                        Style::default()
+                            .fg(Color::Rgb(255, 255, 0))
+                            .add_modifier(Modifier::BOLD),
+                    )
+                })
+                .collect()
+        };
+        if !frame.message.is_empty() {
+            return out;
+        }
         if lay.spacer {
             out.push(Line::from(""));
         }
@@ -241,11 +288,26 @@ mod pac_tui_impl {
         }
     }
 
-    // Wait for a keypress, or give up. Used to hold the last frame on screen
-    // after the game ends on its own.
-    fn linger(ms: u64) {
-        if let Ok(true) = event::poll(std::time::Duration::from_millis(ms)) {
-            let _ = event::read();
+    // Hold the final screen until the player dismisses it. Redrawing each pass
+    // keeps it correct across a resize, and only `q` or Escape gets out, so a
+    // stray keystroke cannot skip the tally.
+    fn wait_for_quit(
+        term: &mut Terminal<CrosstermBackend<std::fs::File>>,
+        frame: &crate::PacFrame,
+    ) {
+        loop {
+            let _ = term.draw(|f| draw(f, frame));
+            if let Ok(true) = event::poll(std::time::Duration::from_millis(200)) {
+                if let Ok(event::Event::Key(k)) = event::read() {
+                    if k.kind != event::KeyEventKind::Press {
+                        continue;
+                    }
+                    match key_name(k).as_str() {
+                        "q" | "Escape" => return,
+                        _ => {}
+                    }
+                }
+            }
         }
     }
 
@@ -275,10 +337,10 @@ mod pac_tui_impl {
             let frame = cmds.view.call1(&state);
             let _ = term.draw(|f| draw(f, &frame));
             if frame.done {
-                // A game that ended on its own deserves a look; one the player
+                // A game that ended on its own shows its tally; one the player
                 // walked out of does not.
                 if last != CMD_QUIT && last != CMD_SAVE {
-                    linger(4000);
+                    wait_for_quit(&mut term, &frame);
                 }
                 break frame.save;
             }

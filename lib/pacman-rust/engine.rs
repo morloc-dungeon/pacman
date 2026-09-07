@@ -42,6 +42,7 @@ pub struct PacFrame {
     pub status: String,
     pub done: bool,
     pub save: bool,
+    pub message: Vec<String>,
 }
 
 // The engine bundled as a value. morloc builds this struct; the fields are the
@@ -127,6 +128,14 @@ const PAC_MAZE_HALF: [&str; 31] = [
     "#.............",
     "##############",
 ];
+
+// Every maze row is its left half mirrored, so a half's pellets count twice.
+fn pac_total_pellets() -> i64 {
+    PAC_MAZE_HALF
+        .iter()
+        .map(|h| 2 * h.chars().filter(|c| *c == '.' || *c == 'o').count() as i64)
+        .sum()
+}
 
 fn pac_fresh_maze() -> Vec<String> {
     PAC_MAZE_HALF
@@ -560,6 +569,24 @@ fn pac_pac_char(dir: i64) -> char {
     }
 }
 
+// The end of a game is its own screen: the board has nothing left to say, and
+// the player wants the tally. Built here rather than in a frontend so every
+// frontend shows the same thing and the suite can check it.
+fn pac_score_rows(s: &PacState) -> Vec<String> {
+    let title = if s.outcome == 1 { "YOU WIN" } else { "GAME OVER" };
+    let eaten = pac_total_pellets() - s.pellets;
+    vec![
+        String::new(),
+        String::from(title),
+        String::new(),
+        format!("SCORE {:>10}", s.score),
+        format!("DOTS EATEN {:>5}", eaten),
+        format!("LIVES LEFT {:>5}", s.lives),
+        String::new(),
+        String::from("press q to quit"),
+    ]
+}
+
 pub fn pac_view(s: &PacState) -> PacFrame {
     let mut grid: Vec<Vec<char>> = s.maze.iter().map(|r| r.chars().collect()).collect();
     for g in s.ghosts.iter() {
@@ -585,6 +612,12 @@ pub fn pac_view(s: &PacState) -> PacFrame {
         }
     };
 
+    let message: Vec<String> = if s.outcome == 1 || s.outcome == 2 {
+        pac_score_rows(s)
+    } else {
+        Vec::new()
+    };
+
     PacFrame {
         rows: grid.into_iter().map(|r| r.into_iter().collect()).collect(),
         status: format!(
@@ -593,6 +626,7 @@ pub fn pac_view(s: &PacState) -> PacFrame {
         ),
         done: s.outcome != 0,
         save: s.outcome == 4,
+        message,
     }
 }
 

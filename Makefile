@@ -21,7 +21,8 @@ test: build
 	rm -f test/rt.sav
 	./$(TEST) writeReplay test/rt.sav
 	./$(TEST) -f jsonl showSave test/rt.sav >> test/obs.txt
-	./$(RENDER) -f jsonl @ 70 40 >> test/obs.txt
+	./$(RENDER) -f jsonl frame 70 40 >> test/obs.txt
+	./$(RENDER) -f jsonl ending 70 40 >> test/obs.txt
 	diff -u test/exp.txt test/obs.txt
 
 clean:

@@ -71,6 +71,10 @@ record Frame where
   status :: Str
   done :: Bool
   save :: Bool
+  --' Lines to show in place of the board. Empty while a game is running; at the
+  --' end it holds the tally. Unlike `rows`, which is a map of tiles a frontend
+  --' draws however it likes, these are literal text.
+  message :: [Str]
 
 --' The engine, as a value. A frontend receives one of these and calls nothing
 --' else. Every field is pure, so a frontend can render, replay, or rewind

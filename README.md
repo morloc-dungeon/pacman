@@ -80,6 +80,9 @@ make build
 ```
 
 Arrows or `hjkl` to move, `s` to save and quit, `q` to quit without saving.
+A game that ends on its own -- cleared or out of lives -- shows a tally of the
+final score and waits for `q`, so the result does not flash past. Leaving by
+`q` or `s` skips it; you already know how it went.
 The board is drawn two terminal columns per tile, because a cell is about twice
 as tall as it is wide and a one-column tile looks stretched. Which glyph stands
 for which tile is a frontend decision -- the engine returns a tile map.

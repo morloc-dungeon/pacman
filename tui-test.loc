@@ -1,10 +1,18 @@
---' Renders one frame off-screen. Exercises the drawing code with no terminal.
-module tui-test (frame)
+--' Renders frames off-screen. Exercises the drawing code with no terminal.
+module tui-test (frame, ending)
 
 import .lib.pacman
 import .lib.pacman-rust
 import .lib.tui
 import root-rust
 
+--' A fresh board.
 frame :: Int -> Int -> <IO> [Str]
 frame w h = tuiFrame commands (newGame 3) w h
+
+--' The tally shown when a game ends on its own.
+ending :: Int -> Int -> <IO> [Str]
+ending w h = tuiFrame commands lostGame w h
+
+lostGame :: GameState
+lostGame = runCommands (replicate 400 cmdTick) (runCommands [cmdLeft] (newGame 3))
