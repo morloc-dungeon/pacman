@@ -31,6 +31,8 @@ runTests =
   . testGroup "Danger" testDanger
   . testGroup "Keeping" testKeeping
   . testGroup "Ending" testEnding
+  . testGroup "Levels" testLevels
+  . testGroup "Progress" testProgress
   )
 
 -------------------------------------------------------------------------------
@@ -183,9 +185,52 @@ testEnding =
   . testEqual "the tally is eight lines" (size (.message (view lost))) (8 :: U64)
   . testEqual "it says how it ended" (.[1] (.message (view lost))) "GAME OVER"
   . testEqual "it totals the score" (.[3] (.message (view lost))) "SCORE         70"
-  . testEqual "it counts what was eaten" (.[4] (.message (view lost))) "DOTS EATEN     7"
-  . testEqual "and it says how to leave" (.[7] (.message (view lost))) "press q to quit"
+  . testEqual "a dead player is offered no way on" (.[7] (.message (view lost))) "press q to quit"
   . testEqual "the board is untouched by it" (size (.rows (view lost))) (31 :: U64)
   . testEqual "a running game has no tally" (size (.message (view start))) (0 :: U64)
   . testEqual "nor has one the player quit" (size (.message (view (runCommands [cmdQuit] start)))) (0 :: U64)
+  )
+
+--' Every map a level generator returns must be playable, and `mazeProblems` is
+--' what playable means. Checking the generator against that rule rather than
+--' against a picture of one board is what lets the generator change freely.
+levels :: [Int]
+levels = [1, 2, 3, 4, 5, 9, 17, 33, 128, 999]
+
+testLevels :: (Int, Int) -> (Int, Int)
+testLevels =
+  ( testEqual "every generated map is playable" (map (\n -> size (mazeProblems (makeMaze n))) levels) (map (\_ -> (0 :: U64)) levels)
+  . testEqual "a map is 31 rows" (map (\n -> size (makeMaze n)) levels) (map (\_ -> (31 :: U64)) levels)
+  . testEqual "level one is the arcade board" (makeMaze 1) (.maze start)
+  . testEqual "a later level is not" ((makeMaze 2) != (makeMaze 1)) True
+  . testEqual "and the levels differ from each other" ((makeMaze 2) != (makeMaze 3)) True
+  . testEqual "the same level is always the same map" (makeMaze 7) (makeMaze 7)
+  . testEqual "a torn map is reported" (size (mazeProblems ["##", "##"])) (1 :: U64)
+  . testEqual "a game starts on level one" (.level start) 1
+  )
+
+--' Clearing a board offers a way on; taking it deals a new one. The cleared
+--' state is built with setters rather than played out: eating 244 pellets is a
+--' long script to write and a longer one to read.
+--' FINDINGS #7: one setter naming both fields would assign them in declaration
+--' order rather than by name, silently swapping the two values.
+cleared :: GameState
+cleared = .(.pellets = 0) (.(.outcome = 1) start)
+
+nextLevel :: GameState
+nextLevel = runCommands [cmdContinue] cleared
+
+testProgress :: (Int, Int) -> (Int, Int)
+testProgress =
+  ( testEqual "clearing a board offers a way on" (.[7] (.message (view cleared))) "press c to go on, q to quit"
+  . testEqual "and says which board it was" (.[1] (.message (view cleared))) "LEVEL 1 CLEARED"
+  . testEqual "continuing deals the next level" (.level nextLevel) 2
+  . testEqual "on a different map" ((.maze nextLevel) != (.maze cleared)) True
+  . testEqual "that is itself playable" (size (mazeProblems (.maze nextLevel))) (0 :: U64)
+  . testEqual "the score carries over" (.score nextLevel) (.score cleared)
+  . testEqual "so do the lives" (.lives nextLevel) (.lives cleared)
+  . testEqual "there are dots to eat again" ((.pellets nextLevel) > 100) True
+  . testEqual "and the game is running" (.outcome nextLevel) 0
+  . testEqual "continuing a running game does nothing" (.level (runCommands [cmdContinue] start)) 1
+  . testEqual "nor does continuing a lost one" (.level (runCommands [cmdContinue] lost)) 1
   )

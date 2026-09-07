@@ -35,6 +35,10 @@ cmdQuit = 6
 cmdSave :: Command
 cmdSave = 7
 
+--' Start the next level. Only means anything once one is cleared.
+cmdContinue :: Command
+cmdContinue = 8
+
 --' A ghost. `kind` selects the targeting rule (0 Blinky, 1 Pinky, 2 Inky,
 --' 3 Clyde); `state` is 0 in the house, 1 hunting, 2 frightened, 3 eyes
 --' returning home. `timer` counts down whatever the state is waiting on.
@@ -63,6 +67,7 @@ record GameState where
   seed :: Int
   outcome :: Int
   savefile :: Str
+  level :: Int
 
 --' One drawable frame. The engine decides what the screen says; a frontend
 --' only paints it.
@@ -87,6 +92,17 @@ record PacmanCommands where
 
 --' Start a game with the given number of lives.
 newGame :: Int -> GameState
+
+--' The map for a level: 31 rows of 28 tiles, '#' wall, '.' dot, 'o' energizer,
+--' '-' ghost-house door, ' ' open. Level 1 is the arcade board; every level
+--' after it is generated from its number, so the same number always gives the
+--' same map. A map it returns always satisfies `mazeProblems`.
+makeMaze :: Int -> [Str]
+
+--' Everything wrong with a map, empty when it is fit to play. This is the
+--' definition of a valid map, so a generator can be checked against it and a
+--' hand-drawn map can be checked before anyone tries to play it.
+mazeProblems :: [Str] -> [Str]
 
 --' Translate a key name ("up", "a", "Escape", ...) into a command. An
 --' unrecognised name is `cmdNone`.

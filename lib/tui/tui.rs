@@ -288,23 +288,30 @@ mod pac_tui_impl {
         }
     }
 
-    // Hold the final screen until the player dismisses it. Redrawing each pass
-    // keeps it correct across a resize, and only `q` or Escape gets out, so a
-    // stray keystroke cannot skip the tally.
-    fn wait_for_quit(
+    // Hold the final screen until the player decides. Redrawing each pass keeps
+    // it correct across a resize. Whatever they press goes to the engine, which
+    // knows whether there is a next board to start; the frontend only has to
+    // recognise the one key that means "stop".
+    fn settle(
         term: &mut Terminal<CrosstermBackend<std::fs::File>>,
-        frame: &crate::PacFrame,
-    ) {
+        cmds: &crate::PacCommands,
+        state: &crate::PacState,
+    ) -> Option<crate::PacState> {
         loop {
-            let _ = term.draw(|f| draw(f, frame));
+            let frame = cmds.view.call1(state);
+            let _ = term.draw(|f| draw(f, &frame));
             if let Ok(true) = event::poll(std::time::Duration::from_millis(200)) {
                 if let Ok(event::Event::Key(k)) = event::read() {
                     if k.kind != event::KeyEventKind::Press {
                         continue;
                     }
-                    match key_name(k).as_str() {
-                        "q" | "Escape" => return,
-                        _ => {}
+                    let cmd = cmds.keyOf.call1(&key_name(k));
+                    if cmd == CMD_QUIT {
+                        return None;
+                    }
+                    let next = cmds.step.call2(&cmd, state);
+                    if !cmds.view.call1(&next).done {
+                        return Some(next);
                     }
                 }
             }
@@ -337,12 +344,19 @@ mod pac_tui_impl {
             let frame = cmds.view.call1(&state);
             let _ = term.draw(|f| draw(f, &frame));
             if frame.done {
-                // A game that ended on its own shows its tally; one the player
-                // walked out of does not.
-                if last != CMD_QUIT && last != CMD_SAVE {
-                    wait_for_quit(&mut term, &frame);
+                // A game that ended on its own shows its tally, and may offer a
+                // way on; one the player walked out of does neither.
+                if last == CMD_QUIT || last == CMD_SAVE {
+                    break frame.save;
                 }
-                break frame.save;
+                match settle(&mut term, cmds, &state) {
+                    Some(next) => {
+                        state = next;
+                        last = CMD_TICK;
+                        continue;
+                    }
+                    None => break frame.save,
+                }
             }
             let cmd = match event::poll(std::time::Duration::from_millis(FRAME_MS)) {
                 Ok(true) => match event::read() {

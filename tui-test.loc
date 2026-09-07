@@ -1,5 +1,5 @@
 --' Renders frames off-screen. Exercises the drawing code with no terminal.
-module tui-test (frame, ending)
+module tui-test (frame, ending, onward)
 
 import .lib.pacman
 import .lib.pacman-rust
@@ -10,9 +10,17 @@ import root-rust
 frame :: Int -> Int -> <IO> [Str]
 frame w h = tuiFrame commands (newGame 3) w h
 
---' The tally shown when a game ends on its own.
+--' The tally shown when a game is lost.
 ending :: Int -> Int -> <IO> [Str]
 ending w h = tuiFrame commands lostGame w h
 
+--' The tally shown when a level is cleared, which offers a way on.
+onward :: Int -> Int -> <IO> [Str]
+onward w h = tuiFrame commands clearedGame w h
+
 lostGame :: GameState
 lostGame = runCommands (replicate 400 cmdTick) (runCommands [cmdLeft] (newGame 3))
+
+--' FINDINGS #7: setting both fields in one setter would swap their values.
+clearedGame :: GameState
+clearedGame = .(.pellets = 0) (.(.outcome = 1) (newGame 3))

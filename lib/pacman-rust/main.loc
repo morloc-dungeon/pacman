@@ -20,6 +20,8 @@ source Rust from "engine.rs"
   , "pac_step" as step
   , "pac_view" as view
   , "pac_with_save_file" as withSaveFile
+  , "pac_make_maze" as makeMaze
+  , "pac_maze_problems" as mazeProblems
   , "pac_to_save" as toSave
   , "pac_each" as eachE
   )

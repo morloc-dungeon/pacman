@@ -56,6 +56,35 @@ Because everything crossing that boundary is pure and total, the same engine
 drives the interactive game, the test suite, and the off-screen renderer with
 no conditional compilation and no test doubles.
 
+## Levels are a plugin
+
+The map for a level is one function:
+
+```morloc
+makeMaze :: Int -> [Str]
+```
+
+Level 1 is the arcade board; every level after it is generated from its number,
+so the same number always deals the same map. Replacing that one signature is
+the whole of writing a new level designer -- hand-drawn boards from a file, a
+different generator, a shape that spells your name. Nothing else moves: not the
+rules, not the frontend, not a line of the test suite.
+
+What keeps that safe is a second function that says what a map has to be:
+
+```morloc
+mazeProblems :: [Str] -> [Str]
+```
+
+It returns everything wrong with a map and nothing when it is fit to play --
+right size, symmetric, walled in, a ghost house with a door the ghosts can get
+out of, a tunnel, somewhere for Pac-Man to stand, and every pellet reachable
+from where he starts. The suite checks the generator against *that*, not against
+a picture of one board, so a replacement generator is judged by the same rule
+the current one is. It has already earned its keep: it caught a generated map
+that put a dot on Pac-Man's starting tile but not on its mirror, which no
+eyeball would have noticed.
+
 ## What it plays
 
 The arcade first level: the real 28x31 maze, 240 dots and 4 energizers, four
@@ -80,9 +109,10 @@ make build
 ```
 
 Arrows or `hjkl` to move, `s` to save and quit, `q` to quit without saving.
-A game that ends on its own -- cleared or out of lives -- shows a tally of the
-final score and waits for `q`, so the result does not flash past. Leaving by
-`q` or `s` skips it; you already know how it went.
+Clearing a board shows a tally and offers `c` to go on to the next level or `q`
+to stop; running out of lives shows the same tally with only `q`. Leaving by `q`
+or `s` skips it; you already know how it went. Score and lives carry across
+levels.
 The board is drawn two terminal columns per tile, because a cell is about twice
 as tall as it is wide and a one-column tile looks stretched. Which glyph stands
 for which tile is a frontend decision -- the engine returns a tile map.

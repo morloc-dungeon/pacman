@@ -34,6 +34,7 @@ pub struct PacState {
     pub seed: i64,
     pub outcome: i64,
     pub savefile: String,
+    pub level: i64,
 }
 
 #[derive(Clone)]
@@ -68,6 +69,9 @@ const PAC_DC: [i64; 4] = [0, -1, 0, 1];
 const PAC_PAC_START: (i64, i64) = (23, 13);
 const PAC_DOOR_OUT: (i64, i64) = (11, 13);
 const PAC_HOUSE_MID: (i64, i64) = (14, 13);
+
+// The row that wraps from one side of the board to the other. It carries no dots.
+const PAC_TUNNEL_ROW: i64 = 14;
 
 // Scatter corners, one per ghost kind.
 const PAC_SCATTER: [(i64, i64); 4] = [(0, 25), (0, 2), (30, 27), (30, 0)];
@@ -129,12 +133,193 @@ const PAC_MAZE_HALF: [&str; 31] = [
     "##############",
 ];
 
-// Every maze row is its left half mirrored, so a half's pellets count twice.
-fn pac_total_pellets() -> i64 {
-    PAC_MAZE_HALF
-        .iter()
-        .map(|h| 2 * h.chars().filter(|c| *c == '.' || *c == 'o').count() as i64)
-        .sum()
+// ---------------------------------------------------------------------------
+// Map generation
+//
+// A map is built on its left half and mirrored, so it is symmetric and exactly
+// 28 wide by construction. Three regions are fixed because the rules depend on
+// them: the ghost house and the tile above its door, the side tunnel, and the
+// tile Pac-Man starts on. The rest is random wall blocks, each kept a corridor
+// apart from every other, and anything the flood fill cannot reach afterwards
+// is filled in. Pellets go only on reached tiles, so no map can strand one.
+
+// Half-grid tiles the fixed regions occupy, with a corridor of clearance.
+fn pac_reserved(r: i64, c: i64) -> bool {
+    if (10..=17).contains(&r) && c >= 8 {
+        return true;
+    }
+    if (13..=15).contains(&r) && c <= 9 {
+        return true;
+    }
+    if (22..=24).contains(&r) && c >= 11 {
+        return true;
+    }
+    false
+}
+
+fn pac_stamp_fixed(half: &mut [Vec<char>]) {
+    for c in 0..14usize {
+        half[0][c] = '#';
+        half[30][c] = '#';
+    }
+    for r in 0..31usize {
+        half[r][0] = if r as i64 == PAC_TUNNEL_ROW { ' ' } else { '#' };
+    }
+    // Ghost house: a box with a door on the mirror axis, open above it.
+    for c in 10..14usize {
+        half[12][c] = if c == 13 { '-' } else { '#' };
+        half[16][c] = '#';
+    }
+    for r in 13..16usize {
+        half[r][10] = '#';
+        for c in 11..14usize {
+            half[r][c] = ' ';
+        }
+    }
+    for c in 9..14usize {
+        half[11][c] = ' ';
+    }
+    for c in 0..10usize {
+        half[PAC_TUNNEL_ROW as usize][c] = ' ';
+    }
+    half[23][13] = ' ';
+}
+
+fn pac_block_fits(half: &[Vec<char>], r0: i64, c0: i64, w: i64, h: i64) -> bool {
+    if r0 < 1 || c0 < 1 || r0 + h > 30 || c0 + w > 14 {
+        return false;
+    }
+    // A one-tile halo keeps every block a corridor apart from its neighbours
+    // and from the fixed regions, so corridors never close up.
+    for r in (r0 - 1)..=(r0 + h) {
+        for c in (c0 - 1)..=(c0 + w) {
+            if r < 0 || r > 30 || c < 0 || c > 13 {
+                continue;
+            }
+            if pac_reserved(r, c) || half[r as usize][c as usize] == '#' {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn pac_carve(level: i64) -> Vec<Vec<char>> {
+    let mut half: Vec<Vec<char>> = vec![vec![' '; 14]; 31];
+    let mut seed = pac_rand(level.wrapping_mul(2654435761) ^ 0x5f3a);
+    // Chunky blocks first, then thin walls to divide what they left over. A gap
+    // three tiles across takes a one-tile wall with a corridor either side,
+    // which is what keeps the board from turning into open plaza.
+    let passes: [(i64, i64, i64, i64); 3] = [(2, 3, 2, 3), (1, 1, 2, 4), (2, 4, 1, 1)];
+    for (wmin, wspan, hmin, hspan) in passes {
+        for _ in 0..3000 {
+            seed = pac_rand(seed);
+            let w = wmin + (seed >> 3) % wspan;
+            seed = pac_rand(seed);
+            let h = hmin + (seed >> 3) % hspan;
+            seed = pac_rand(seed);
+            let r0 = 1 + (seed >> 3) % 28;
+            seed = pac_rand(seed);
+            let c0 = 1 + (seed >> 3) % 12;
+            if !pac_block_fits(&half, r0, c0, w, h) {
+                continue;
+            }
+            for r in r0..(r0 + h) {
+                for c in c0..(c0 + w) {
+                    half[r as usize][c as usize] = '#';
+                }
+            }
+        }
+    }
+    pac_stamp_fixed(&mut half);
+    half
+}
+
+fn pac_mirror(half: &[Vec<char>]) -> Vec<Vec<char>> {
+    half.iter()
+        .map(|row| {
+            let mut full: Vec<char> = row.clone();
+            full.extend(row.iter().rev());
+            full
+        })
+        .collect()
+}
+
+// Tiles Pac-Man can stand on, reached from where he starts.
+fn pac_reachable(grid: &[Vec<char>]) -> Vec<Vec<bool>> {
+    let mut seen = vec![vec![false; PAC_COLS as usize]; PAC_ROWS as usize];
+    let mut stack = vec![PAC_PAC_START];
+    while let Some((r, c)) = stack.pop() {
+        if r < 0 || r >= PAC_ROWS {
+            continue;
+        }
+        let c = pac_wrap(c);
+        // Anything that is not wall or door is floor, pellets included: this
+        // runs both before pellets are placed and over a finished map.
+        let t = grid[r as usize][c as usize];
+        if seen[r as usize][c as usize] || t == '#' || t == '-' {
+            continue;
+        }
+        seen[r as usize][c as usize] = true;
+        for d in 0..4usize {
+            stack.push((r + PAC_DR[d], c + PAC_DC[d]));
+        }
+    }
+    seen
+}
+
+fn pac_in_house(r: i64, c: i64) -> bool {
+    (11..=16).contains(&r) && (10..=17).contains(&c)
+}
+
+pub fn pac_make_maze(level: i64) -> Vec<String> {
+    if level <= 1 {
+        return pac_fresh_maze();
+    }
+    let mut grid = pac_mirror(&pac_carve(level));
+    let seen = pac_reachable(&grid);
+    // Anything the flood fill missed is scenery, not playfield.
+    for r in 0..PAC_ROWS {
+        for c in 0..PAC_COLS {
+            if grid[r as usize][c as usize] == ' '
+                && !seen[r as usize][c as usize]
+                && !pac_in_house(r, c)
+            {
+                grid[r as usize][c as usize] = '#';
+            }
+        }
+    }
+    // Dots on every reached tile except the tunnel row, which has none, and the
+    // tile Pac-Man is standing on.
+    let mut dots: Vec<(i64, i64)> = Vec::new();
+    for r in 0..PAC_ROWS {
+        for c in 0..PAC_COLS {
+            // Pac-Man's tile is left bare, and so is its mirror: a dot on one
+            // and not the other would break the board's symmetry.
+            let under_pac = r == PAC_PAC_START.0
+                && (c == PAC_PAC_START.1 || c == PAC_COLS - 1 - PAC_PAC_START.1);
+            if seen[r as usize][c as usize]
+                && r != PAC_TUNNEL_ROW
+                && !under_pac
+                && !pac_in_house(r, c)
+            {
+                grid[r as usize][c as usize] = '.';
+                dots.push((r, c));
+            }
+        }
+    }
+    // One energizer per quadrant, on the dot furthest from the middle.
+    let mid = (PAC_ROWS / 2, PAC_COLS / 2);
+    for quad in 0..4 {
+        let pick = dots
+            .iter()
+            .filter(|(r, c)| ((*r < mid.0) as i64) * 2 + ((*c < mid.1) as i64) == quad)
+            .max_by_key(|(r, c)| pac_dist2((*r, *c), mid));
+        if let Some(&(r, c)) = pick {
+            grid[r as usize][c as usize] = 'o';
+        }
+    }
+    grid.into_iter().map(|r| r.into_iter().collect()).collect()
 }
 
 fn pac_fresh_maze() -> Vec<String> {
@@ -217,7 +402,7 @@ fn pac_start_ghosts() -> Vec<PacGhost> {
 }
 
 pub fn pac_new_game(lives: i64) -> PacState {
-    let maze = pac_fresh_maze();
+    let maze = pac_make_maze(1);
     let pellets = maze
         .iter()
         .map(|r| r.chars().filter(|c| *c == '.' || *c == 'o').count() as i64)
@@ -238,6 +423,36 @@ pub fn pac_new_game(lives: i64) -> PacState {
         seed: 1,
         outcome: 0,
         savefile: String::from("pacman.sav"),
+        level: 1,
+    }
+}
+
+// Carry the player forward onto the next board: the score and what is left of
+// their lives, nothing else.
+fn pac_next_level(s: &PacState) -> PacState {
+    let level = s.level + 1;
+    let maze = pac_make_maze(level);
+    let pellets = maze
+        .iter()
+        .map(|r| r.chars().filter(|c| *c == '.' || *c == 'o').count() as i64)
+        .sum();
+    PacState {
+        maze,
+        pac: PAC_PAC_START,
+        dir: 1,
+        want: 1,
+        ghosts: pac_start_ghosts(),
+        score: s.score,
+        lives: s.lives,
+        pellets,
+        fright: 0,
+        chain: 0,
+        phase: 0,
+        ticks: 0,
+        seed: s.seed,
+        outcome: 0,
+        savefile: s.savefile.clone(),
+        level,
     }
 }
 
@@ -257,6 +472,7 @@ pub fn pac_key_of(k: &String) -> i64 {
         "left" | "h" | "a" => 3,
         "right" | "l" | "d" => 4,
         "s" => 7,
+        "c" => 8,
         "q" | "Escape" => 6,
         _ => 0,
     }
@@ -521,6 +737,11 @@ fn pac_tick(s: &PacState) -> PacState {
 
 pub fn pac_step(cmd: i64, s: &PacState) -> PacState {
     if s.outcome != 0 {
+        // A finished game takes no orders except the one that starts the next
+        // board, and only when there is a next board to start.
+        if cmd == 8 && s.outcome == 1 {
+            return pac_next_level(s);
+        }
         return s.clone();
     }
     match cmd {
@@ -573,17 +794,25 @@ fn pac_pac_char(dir: i64) -> char {
 // the player wants the tally. Built here rather than in a frontend so every
 // frontend shows the same thing and the suite can check it.
 fn pac_score_rows(s: &PacState) -> Vec<String> {
-    let title = if s.outcome == 1 { "YOU WIN" } else { "GAME OVER" };
-    let eaten = pac_total_pellets() - s.pellets;
+    let cleared = s.outcome == 1;
+    let title = if cleared {
+        format!("LEVEL {} CLEARED", s.level)
+    } else {
+        String::from("GAME OVER")
+    };
     vec![
         String::new(),
-        String::from(title),
+        title,
         String::new(),
         format!("SCORE {:>10}", s.score),
-        format!("DOTS EATEN {:>5}", eaten),
+        format!("DOTS LEFT {:>7}", s.pellets),
         format!("LIVES LEFT {:>5}", s.lives),
         String::new(),
-        String::from("press q to quit"),
+        String::from(if cleared {
+            "press c to go on, q to quit"
+        } else {
+            "press q to quit"
+        }),
     ]
 }
 
@@ -621,8 +850,8 @@ pub fn pac_view(s: &PacState) -> PacFrame {
     PacFrame {
         rows: grid.into_iter().map(|r| r.into_iter().collect()).collect(),
         status: format!(
-            "SCORE {:>6}  LIVES {}  DOTS {:>3}  {}",
-            s.score, s.lives, s.pellets, mode
+            "LEVEL {}  SCORE {:>6}  LIVES {}  DOTS {:>3}  {}",
+            s.level, s.score, s.lives, s.pellets, mode
         ),
         done: s.outcome != 0,
         save: s.outcome == 4,
@@ -649,4 +878,91 @@ pub fn pac_each<A, F: Fn(&A)>(xs: &Vec<A>, f: F) {
     for x in xs.iter() {
         f(x);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Map validation
+//
+// What it means for a map to be playable. A generator is checked against this
+// rather than against a picture of what it should look like, so a new generator
+// is judged by the same rule as a hand-drawn board.
+
+pub fn pac_maze_problems(maze: &Vec<String>) -> Vec<String> {
+    let mut bad: Vec<String> = Vec::new();
+    if maze.len() as i64 != PAC_ROWS {
+        bad.push(format!("{} rows, want {}", maze.len(), PAC_ROWS));
+        return bad;
+    }
+    for (i, row) in maze.iter().enumerate() {
+        if row.chars().count() as i64 != PAC_COLS {
+            bad.push(format!("row {} is {} wide, want {}", i, row.chars().count(), PAC_COLS));
+        }
+        if let Some(c) = row.chars().find(|c| !"#.o- ".contains(*c)) {
+            bad.push(format!("row {} holds {:?}, not a tile", i, c));
+        }
+    }
+    if !bad.is_empty() {
+        return bad;
+    }
+
+    let grid: Vec<Vec<char>> = maze.iter().map(|r| r.chars().collect()).collect();
+    let at = |r: i64, c: i64| grid[r as usize][pac_wrap(c) as usize];
+
+    for row in [0, PAC_ROWS - 1] {
+        if (0..PAC_COLS).any(|c| at(row, c) != '#') {
+            bad.push(format!("row {} is not a wall", row));
+        }
+    }
+    for (i, row) in maze.iter().enumerate() {
+        let f: Vec<char> = row.chars().collect();
+        if (0..14).any(|c| f[c] != f[27 - c]) {
+            bad.push(format!("row {} is not symmetric", i));
+        }
+    }
+    if at(PAC_PAC_START.0, PAC_PAC_START.1) != ' ' {
+        bad.push(String::from("Pac-Man starts inside a wall"));
+    }
+    if at(PAC_DOOR_OUT.0, PAC_DOOR_OUT.1) != ' ' {
+        bad.push(String::from("no room above the ghost-house door"));
+    }
+    if at(12, 13) != '-' || at(12, 14) != '-' {
+        bad.push(String::from("the ghost house has no door"));
+    }
+    for c in [PAC_HOUSE_MID.1 - 2, PAC_HOUSE_MID.1, PAC_HOUSE_MID.1 + 3] {
+        if at(PAC_HOUSE_MID.0, c) != ' ' {
+            bad.push(format!("no room in the ghost house at column {}", c));
+        }
+    }
+    // A ghost leaves by walking up the middle to the door; that run must be open.
+    for r in (PAC_DOOR_OUT.0)..=(PAC_HOUSE_MID.0) {
+        if at(r, PAC_HOUSE_MID.1) == '#' {
+            bad.push(format!("the ghosts cannot get out at row {}", r));
+        }
+    }
+    if at(PAC_TUNNEL_ROW, 0) == '#' || at(PAC_TUNNEL_ROW, PAC_COLS - 1) == '#' {
+        bad.push(String::from("the tunnel is walled off"));
+    }
+
+    let seen = pac_reachable(&grid);
+    let mut dots = 0;
+    for r in 0..PAC_ROWS {
+        for c in 0..PAC_COLS {
+            let t = at(r, c);
+            if t != '.' && t != 'o' {
+                continue;
+            }
+            dots += 1;
+            if !seen[r as usize][pac_wrap(c) as usize] {
+                bad.push(format!("the pellet at {},{} cannot be reached", r, c));
+            }
+        }
+    }
+    if dots < 100 {
+        bad.push(format!("only {} pellets, too few to play", dots));
+    }
+    let energizers = maze.iter().map(|r| r.matches('o').count()).sum::<usize>();
+    if energizers != 4 {
+        bad.push(format!("{} energizers, want 4", energizers));
+    }
+    bad
 }

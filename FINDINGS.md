@@ -386,3 +386,75 @@ conclude the fix does not work.
 Delete the constructor and its three printer cases. Left out of the capture-mode
 fix deliberately: removing a shared IR constructor is a separate change from
 correcting one member's capture semantics.
+
+---
+
+## 7. A multi-field setter on a user-mapped record ignores the field names
+
+- Status: open
+- Component: compiler (Rust member)
+- morloc: 0.102.1
+- Severity: silent data corruption. No error, no warning, wrong values.
+
+### Observed
+
+A setter naming several fields at once assigns the values **in field-declaration
+order** rather than to the fields named, when the record is user-mapped
+(`record Rust => R = "Name"`). A compiler-generated record (`= "struct"`) is
+correct.
+
+```morloc
+module main (mapped, generated)
+
+import root-rust
+
+record Two where
+  a :: Int
+  b :: Int
+record Rust => Two = "Two"
+
+source Rust from "own.rs" ("rw_two" as two)
+two :: Two
+
+record Gen where
+  p :: Int
+  q :: Int
+  r :: Int
+  s :: Int
+  t :: Int
+  u :: Int
+record Rust => Gen = "struct"
+
+gen0 :: Gen
+gen0 = {p = 0, q = 0, r = 0, s = 0, t = 0, u = 0}
+
+mapped :: [Int]
+mapped = let x = .(.b = 1, .a = 2) two in [.a x, .b x]
+
+generated :: [Int]
+generated = let x = .(.u = 1, .q = 2) gen0 in [.q x, .u x]
+```
+
+```rust
+#[derive(Clone)]
+pub struct Two { pub a: i64, pub b: i64 }
+pub fn rw_two() -> Two { Two { a: 0, b: 0 } }
+```
+
+```
+mapped    (want [2,1]): [1,2]     <-- values landed on the wrong fields
+generated (want [2,1]): [2,1]
+```
+
+It only bites when the written order differs from the declaration order, and
+only between fields of the same type -- a mismatched type presumably fails to
+typecheck, which is why this can sit unnoticed. Two same-typed fields swap in
+silence.
+
+### Workarounds (both verified)
+
+- Chain single-field setters: `.(.a = 2) (.(.b = 1) two)`.
+- Or write the fields in declaration order, which is correct by accident and
+  breaks silently if the record is ever reordered.
+
+The demo uses the chained form; search for `FINDINGS #7`.
