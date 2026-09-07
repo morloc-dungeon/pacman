@@ -1,0 +1,171 @@
+--' The Pac-Man test suite. It knows the interface and nothing else, so it
+--' runs unchanged against any implementation of it.
+module (*)
+
+import .lib.pacman
+import root
+
+--' Harness. An implementation module supplies these.
+testEqual :: Str -> a -> a -> (Int, Int) -> (Int, Int)
+printMsg :: Str -> a -> a
+printResult :: (Int, Int) -> (Int, Int)
+
+testGroup :: Str -> ((Int, Int) -> (Int, Int)) -> (Int, Int) -> (Int, Int)
+testGroup msg tests = tests . printMsg msg
+
+passed :: (Int, Int) -> Bool
+passed t = 0 == (.0 t)
+
+test :: Bool
+test = runTests (0, 0)
+
+runTests :: (Int, Int) -> Bool
+runTests =
+  ( passed
+  . printResult
+  . testGroup "Keys" testKeys
+  . testGroup "Start" testStart
+  . testGroup "Moving" testMoving
+  . testGroup "Tunnel" testTunnel
+  . testGroup "Power" testPower
+  . testGroup "Danger" testDanger
+  . testGroup "Keeping" testKeeping
+  )
+
+-------------------------------------------------------------------------------
+
+testKeys :: (Int, Int) -> (Int, Int)
+testKeys =
+  ( testEqual "up arrow" (keyOf "up") cmdUp
+  . testEqual "down arrow" (keyOf "down") cmdDown
+  . testEqual "left arrow" (keyOf "left") cmdLeft
+  . testEqual "right arrow" (keyOf "right") cmdRight
+  . testEqual "vim h" (keyOf "h") cmdLeft
+  . testEqual "save" (keyOf "s") cmdSave
+  . testEqual "quit" (keyOf "q") cmdQuit
+  . testEqual "escape" (keyOf "Escape") cmdQuit
+  . testEqual "unknown key is inert" (keyOf "zzz") cmdNone
+  )
+
+start :: GameState
+start = newGame 3
+
+testStart :: (Int, Int) -> (Int, Int)
+testStart =
+  ( testEqual "score starts at zero" (.score start) 0
+  . testEqual "lives as asked" (.lives start) 3
+  . testEqual "game is running" (.outcome start) 0
+  . testEqual "maze is 31 rows" (size (.rows (view start))) 31
+  . testEqual "rows are 28 wide" (map size (.rows (view start))) (map (\_ -> (28 :: U64)) (.rows (view start)))
+  . testEqual "frame is not done" (.done (view start)) False
+  . testEqual "nothing to save yet" (.save (view start)) False
+  )
+
+--' Walking left from the start eats the dot at the tile Pac-Man arrives on.
+testMoving :: (Int, Int) -> (Int, Int)
+testMoving =
+  ( testEqual "one step left eats a dot" (.score (runCommands [cmdLeft, cmdTick] start)) 10
+  . testEqual "a dot leaves the board" (.pellets (runCommands [cmdLeft, cmdTick] start)) ((.pellets start) - 1)
+  . testEqual "a board starts with 244 pellets" (.pellets start) 244
+  . testEqual "an illegal turn is ignored and he keeps going" (.pac (runCommands [cmdUp, cmdTick] start)) (23, 12)
+  . testEqual "a wall stops him" (.pac (runCommands (replicate 10 cmdTick) (runCommands [cmdLeft] start))) (23, 6)
+  . testEqual "he ate the whole corridor on the way" (.score (runCommands (replicate 10 cmdTick) (runCommands [cmdLeft] start))) 70
+  . testEqual "quitting ends the game" (.outcome (runCommands [cmdQuit] start)) 3
+  . testEqual "saving ends the game" (.save (view (runCommands [cmdSave] start))) True
+  . testEqual "a finished game ignores input" (.outcome (runCommands [cmdQuit, cmdTick, cmdLeft] start)) 3
+  )
+
+-------------------------------------------------------------------------------
+-- Persistence
+--
+-- A saved game is the `GameState` record and nothing else, so writing and
+-- reading one needs no bespoke format. These are two separate commands on
+-- purpose: the file is written by one process and read back by another, which
+-- is the property worth testing.
+
+--' Play a fixed script, then write the result out.
+writeReplay :: Str -> <IO, Err> ()
+writeReplay path = @save 0 path replay
+
+--' Read a saved game and render it.
+showSave :: Str -> <IO, Err> [Str]
+showSave path = do
+  s <- @load path :: <IO, Err> GameState
+  frameLines s
+
+--' A fixed script: turn left, then let twelve frames pass.
+replay :: GameState
+replay = runCommands (replicate 12 cmdTick) (runCommands [cmdLeft] start)
+
+frameLines :: GameState -> [Str]
+frameLines s = concat [[.status (view s)], .rows (view s)]
+
+-------------------------------------------------------------------------------
+-- Routes used by more than one test. Each is a script of commands, so they say
+-- exactly what a player would do.
+
+--' Left along the bottom corridor, up the west side, into the tunnel mouth.
+toTunnelMouth :: [Command]
+toTunnelMouth = concat
+  [ [cmdLeft], replicate 7 cmdTick
+  , [cmdUp], replicate 9 cmdTick
+  , [cmdLeft], replicate 6 cmdTick
+  ]
+
+--' One step further, which leaves the board on the west and returns on the east.
+throughTunnel :: [Command]
+throughTunnel = concat [toTunnelMouth, [cmdTick]]
+
+--' Down and around to the energizer in the south-west pocket.
+toEnergizer :: [Command]
+toEnergizer = concat
+  [ [cmdLeft], replicate 7 cmdTick
+  , [cmdDown], replicate 3 cmdTick
+  , [cmdLeft], replicate 3 cmdTick
+  , [cmdUp], replicate 3 cmdTick
+  , [cmdLeft], replicate 2 cmdTick
+  ]
+
+ghostStates :: GameState -> [Int]
+ghostStates s = map (\g -> .state g) (.ghosts s)
+
+--' The side tunnel wraps west to east and carries no dots.
+testTunnel :: (Int, Int) -> (Int, Int)
+testTunnel =
+  ( testEqual "the west corridor ends at the tunnel mouth" (.pac (runCommands toTunnelMouth start)) (14, 0)
+  . testEqual "one more step comes out the far side" (.pac (runCommands throughTunnel start)) (14, 27)
+  . testEqual "the tunnel is not worth anything" (.score (runCommands throughTunnel start)) (.score (runCommands toTunnelMouth start))
+  )
+
+--' An energizer scores fifty and turns every ghost that is out on the board.
+testPower :: (Int, Int) -> (Int, Int)
+testPower =
+  ( testEqual "seventeen dots and an energizer" (.score (runCommands toEnergizer start)) 220
+  . testEqual "eighteen tiles cleared" (.pellets (runCommands toEnergizer start)) 226
+  . testEqual "six seconds of fright" (.fright (runCommands toEnergizer start)) 48
+  . testEqual "the ghosts on the board turn" (ghostStates (runCommands toEnergizer start)) [2, 2, 0, 0]
+  . testEqual "and they recover" (ghostStates (runCommands (replicate 50 cmdTick) (runCommands toEnergizer start))) [1, 1, 1, 0]
+  )
+
+--' Standing still against a wall gets you caught. The clock restarts on a
+--' death, which is how the test sees that one happened.
+held :: Int -> GameState
+held n = runCommands (replicate n cmdTick) (runCommands [cmdLeft] start)
+
+testDanger :: (Int, Int) -> (Int, Int)
+testDanger =
+  ( testEqual "nobody has reached him yet" (.lives (held 60)) 3
+  . testEqual "a ghost finds him" (.lives (held 120)) 2
+  . testEqual "and the round restarted" (.ticks (held 120)) 18
+  . testEqual "then finds him again" (.lives (held 300)) 1
+  . testEqual "the game is still running" (.outcome (held 300)) 0
+  )
+
+--' What gets written out, and in what condition.
+testKeeping :: (Int, Int) -> (Int, Int)
+testKeeping =
+  ( testEqual "a game the player kept is written" (map (\s -> .score s) (toSave (True, runCommands [cmdLeft, cmdTick] start))) [10]
+  . testEqual "one they walked away from is not" (size (toSave (False, start))) (0 :: U64)
+  . testEqual "it is stored ready to resume, not finished" (map (\s -> .outcome s) (toSave (True, runCommands [cmdSave] start))) [0]
+  . testEqual "and it remembers its own file" (map (\s -> .savefile s) (toSave (True, withSaveFile "x.sav" start))) ["x.sav"]
+  )

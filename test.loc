@@ -1,0 +1,5 @@
+module test-pacman (test, writeReplay, showSave)
+
+import .lib.pacman.test (test, writeReplay, showSave)
+import .lib.pacman-rust
+import .lib.harness-rust

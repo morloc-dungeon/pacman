@@ -1,0 +1,10 @@
+name: pacman-tui
+version: 0.1.0
+synopsis: Terminal frontend for the Pac-Man interface
+
+# Only a build that includes this module pays for these. morloc collects
+# rust-deps per module and unions them into the generated pool Cargo.toml, so
+# the test program's pool has neither.
+rust-deps:
+  ratatui: "0.29"
+  libc: "0.2"

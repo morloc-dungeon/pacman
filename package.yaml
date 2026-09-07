@@ -1,0 +1,12 @@
+name: pacman
+version: 0.1.0
+synopsis: Pac-Man in a terminal, with the engine handed to the frontend as a record of functions
+description: >
+  A playable Pac-Man whose rules are a pure, language-agnostic morloc interface
+  and whose terminal frontend receives that interface as a record of functions.
+  The frontend names no implementation, the engine performs no IO, and the test
+  suite would run unchanged against an engine written in another language.
+category: demo
+license: MIT
+author: "Zebulun Arendsee"
+maintainer: "z@morloc.io"

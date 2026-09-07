@@ -1,0 +1,123 @@
+--' The Pac-Man interface: what a game engine must provide and what a frontend
+--' may rely on. Pure morloc, no language mappings, no implementations.
+module (*)
+
+import root
+
+--' A player instruction. The engine interprets these; a frontend obtains one
+--' from `keyOf` and never constructs one itself.
+type Command = Int
+
+cmdNone :: Command
+cmdNone = 0
+
+cmdUp :: Command
+cmdUp = 1
+
+cmdDown :: Command
+cmdDown = 2
+
+cmdLeft :: Command
+cmdLeft = 3
+
+cmdRight :: Command
+cmdRight = 4
+
+--' Advance the world one frame with no player input.
+cmdTick :: Command
+cmdTick = 5
+
+--' Leave without writing a save file.
+cmdQuit :: Command
+cmdQuit = 6
+
+--' Leave and write a save file.
+cmdSave :: Command
+cmdSave = 7
+
+--' A ghost. `kind` selects the targeting rule (0 Blinky, 1 Pinky, 2 Inky,
+--' 3 Clyde); `state` is 0 in the house, 1 hunting, 2 frightened, 3 eyes
+--' returning home. `timer` counts down whatever the state is waiting on.
+record Ghost where
+  pos :: (Int, Int)
+  dir :: Int
+  kind :: Int
+  state :: Int
+  timer :: Int
+
+--' The whole world. Everything needed to draw a frame or resume a game, and
+--' nothing else -- so a save file is exactly this record.
+record GameState where
+  maze :: [Str]
+  pac :: (Int, Int)
+  dir :: Int
+  want :: Int
+  ghosts :: [Ghost]
+  score :: Int
+  lives :: Int
+  pellets :: Int
+  fright :: Int
+  chain :: Int
+  phase :: Int
+  ticks :: Int
+  seed :: Int
+  outcome :: Int
+  savefile :: Str
+
+--' One drawable frame. The engine decides what the screen says; a frontend
+--' only paints it.
+record Frame where
+  rows :: [Str]
+  status :: Str
+  done :: Bool
+  save :: Bool
+
+--' The engine, as a value. A frontend receives one of these and calls nothing
+--' else. Every field is pure, so a frontend can render, replay, or rewind
+--' without asking permission.
+record PacmanCommands where
+  newGame :: Int -> GameState
+  keyOf :: Str -> Command
+  step :: Command -> GameState -> GameState
+  view :: GameState -> Frame
+
+--' Start a game with the given number of lives.
+newGame :: Int -> GameState
+
+--' Translate a key name ("up", "a", "Escape", ...) into a command. An
+--' unrecognised name is `cmdNone`.
+keyOf :: Str -> Command
+
+--' Apply one command. Total: an illegal move is a no-op, not an error.
+step :: Command -> GameState -> GameState
+
+--' Render the world.
+view :: GameState -> Frame
+
+--' Point a game at a save file.
+withSaveFile :: Str -> GameState -> GameState
+
+--' The engine bundled for a frontend.
+commands :: PacmanCommands
+commands = ({newGame = newGame, keyOf = keyOf, step = step, view = view} :: PacmanCommands)
+
+--' Which games should be written out. Empty means "do not write". The engine
+--' answers this because only the engine knows whether a game is worth keeping.
+--'
+--' FINDINGS #2: this exists as a list rather than a condition because a
+--' non-recursive guard with effectful arms miscompiles in a Rust pool. Carrying
+--' the choice as data keeps the branch on the pure side.
+toSave :: (Bool, GameState) -> [GameState]
+
+--' Apply an effectful action to every element. A general combinator the
+--' standard library does not offer yet; `mapE_` is the name it should have.
+eachE :: [a] -> (a -> <IO, Err> ()) -> <IO, Err> ()
+
+--' Apply a whole script of commands. This is the entire frontend contract for
+--' a non-interactive driver: tests and replays need nothing more.
+runCommands :: [Command] -> GameState -> GameState
+runCommands cs s = fold (flip step) s cs
+
+--' Translate a script of key names, then run it.
+runKeys :: [Str] -> GameState -> GameState
+runKeys ks = runCommands (map keyOf ks)

@@ -1,0 +1,11 @@
+--' Rust implementation of the test harness.
+module (*)
+
+import .lib.pacman.test
+import root-rust
+
+source Rust from "harness.rs"
+  ( "pht_equal" as testEqual
+  , "pht_msg" as printMsg
+  , "pht_result" as printResult
+  )

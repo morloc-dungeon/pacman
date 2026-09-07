@@ -1,0 +1,10 @@
+--' Renders one frame off-screen. Exercises the drawing code with no terminal.
+module tui-test (frame)
+
+import .lib.pacman
+import .lib.pacman-rust
+import .lib.tui
+import root-rust
+
+frame :: Int -> Int -> <IO> [Str]
+frame w h = tuiFrame commands (newGame 3) w h

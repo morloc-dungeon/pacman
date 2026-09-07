@@ -1,0 +1,9 @@
+/pacman
+/pacman-build/
+/pacman-test
+/pacman-test-build/
+/pacman-tui-test
+/pacman-tui-test-build/
+/pacman.sav
+/test/obs.txt
+/test/rt.sav

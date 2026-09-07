@@ -1,0 +1,25 @@
+--' Rust implementation of the Pac-Man interface.
+--'
+--' This module contributes two things and nothing else: the Rust
+--' representation of every type in the interface, and the Rust functions that
+--' satisfy its signatures. Replacing it with a `pacman-py` would change no
+--' other file except the two entry points that name it.
+module (*)
+
+import .lib.pacman
+import root-rust
+
+record Rust => Ghost = "PacGhost"
+record Rust => GameState = "PacState"
+record Rust => Frame = "PacFrame"
+record Rust => PacmanCommands = "PacCommands"
+
+source Rust from "engine.rs"
+  ( "pac_new_game" as newGame
+  , "pac_key_of" as keyOf
+  , "pac_step" as step
+  , "pac_view" as view
+  , "pac_with_save_file" as withSaveFile
+  , "pac_to_save" as toSave
+  , "pac_each" as eachE
+  )

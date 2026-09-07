@@ -1,0 +1,27 @@
+--' A terminal frontend for the Pac-Man interface.
+--'
+--' It receives an engine as a value and calls nothing else. It owns the
+--' terminal and nothing else: no file is opened here, so a different
+--' persistence policy needs no change to this module.
+module (*)
+
+import .lib.pacman
+import .lib.pacman-rust
+import root-rust
+
+source Rust from "tui.rs"
+  ( "pac_tui_run" as tuiRun
+  , "pac_tui_frame" as tuiFrame
+  , "pac_tui_noop" as noop
+  )
+
+--' Play until the game ends or the player leaves. The flag is the engine's
+--' answer to "should this game be written out", taken from the final frame.
+tuiRun :: PacmanCommands -> GameState -> <IO> (Bool, GameState)
+
+--' Render one frame to an off-screen buffer of the given size. Needs no
+--' terminal, so the drawing code is testable.
+tuiFrame :: PacmanCommands -> GameState -> Int -> Int -> <IO> [Str]
+
+--' Do nothing, effectfully.
+noop :: <IO> ()
