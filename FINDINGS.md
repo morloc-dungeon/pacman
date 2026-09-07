@@ -8,7 +8,11 @@ fixed. Search the source for `FINDINGS #n` to find every workaround site.
 
 ## 1. Rust pool: a generated thunk moves every non-Copy local it touches
 
-- Status: open
+- Status: FIXED, compiler 6338b8e7 ("rust: capture an effect thunk by value only
+  when it escapes"). A thunk now captures by value only where the frame's
+  signature lets a closure leave it; everywhere else it borrows. Golden
+  `rust-thunk-capture`. The workaround below is still in this tree and can now
+  be undone.
 - Component: compiler (Rust member)
 - morloc: 0.102.1, cargo 1.98.0
 - Severity: blocking. Any Rust morloc program that writes a file and then keeps
@@ -141,6 +145,31 @@ describes it as a guard "whose arms mix a pure value and an effectful one". Two
 effectful arms fail just as reliably; what matters is whether the enclosing
 function recurses.
 
+### Cause (found while fixing finding 1, not yet fixed)
+
+`rustMakeIf` (`Members/Rust.hs:1699`) annotates the conditional's result
+binding with `rustTypeOf (typeFof origExpr)`, and `rustTypeOf` erases the effect
+row -- an `<IO> Int` renders as `i64`. But a deferred effect is represented as a
+nullary thunk, so the arms are `impl Fn() -> i64`, and the binding is declared
+with the value type the thunk would produce rather than the thunk's own type:
+
+```
+78 | unsafe fn m1355() -> impl Fn() -> i64 {
+   |                      ---------------- the found opaque type
+99 |         n2
+   |         ^^ expected `i64`, found opaque type
+```
+
+The sibling `rustMakeLet` already handles this: `isFunctionTypeF` reports true
+for an `EffectF` type and the let omits its annotation, letting Rust infer the
+closure. `rustMakeIf` consults nothing. A recursive function escapes because the
+tail-recursion lowering builds the conditional differently.
+
+This is a **different defect from finding 1**, which is about how a thunk
+captures. Both are consequences of representing a deferred effect as a Rust
+closure without one discipline covering every place such a value is bound, but
+they are separate fixes and neither implies the other.
+
 ### Workaround in this demo
 
 There is no morloc-level conditional that survives, so the branch moves into
@@ -262,3 +291,98 @@ Anyone laying out a multi-module project from the manual will write imports
 that do not resolve, and the error will look like a missing module. The rule to
 document is: `source` paths are relative to the file that names them, dotted
 imports are relative to the project root.
+
+---
+
+## 5. Rust pool: a thunk moves a value another thunk is still borrowing
+
+- Status: open
+- Component: compiler (Rust member)
+- morloc: 0.102.1
+- Found while fixing finding 1; it is a **different** defect and finding 1's fix
+  does not touch it.
+
+### Observed
+
+When one `@catch` arm borrows a value and the other yields it, the second
+closure moves what the first still holds:
+
+```morloc
+module main (f)
+
+import root-rust
+
+source Rust from "own.rs" ("rt_nonempty" as nonEmpty)
+nonEmpty :: [Int] -> <Err> [Int]
+
+f :: [Int] -> <IO, Err> [Int]
+f v = @catch (nonEmpty v) v
+```
+
+```rust
+pub fn rt_nonempty(xs: &Vec<i64>) -> Vec<i64> {
+    if xs.is_empty() { rustmorloc::morloc_throw("rt_nonempty: empty"); }
+    xs.clone()
+}
+```
+
+```
+error[E0505]: cannot move out of `n15` because it is borrowed
+248 |     let n15: Vec<i64> = rustmorloc::get_value::<Vec<i64>>(s15, schema(1));
+249 |     let n17 = m1631(&(n15));
+    |                     ------ borrow of `n15` occurs here
+250 |     return rustmorloc::put_value(&(rustmorloc::mlc_catch(n17, || { n15 })), schema(1));
+    |                                    ---------------------      ^^   --- move occurs due to use in closure
+```
+
+### Guess (unverified)
+
+The Rust member already classifies a value used at more than one point as
+*shared* (`varUseCountOps` / `sharedIndicesSM` in `Members/Rust.hs`), and a
+shared non-Copy value is meant to be borrowed at reference sinks and cloned at
+owned sinks, never moved. The thunk's result position looks like it is not
+treated as an owned sink, so the clone is not inserted. Either the use count
+does not see through the thunk body, or the body's tail is not run through the
+ownership adaptation.
+
+### Not covered by a test yet
+
+Deliberately left out of the `rust-thunk-capture` golden, which covers how a
+thunk *captures*; this is about what it *yields*. It needs its own test
+alongside the fix.
+
+---
+
+## 6. A dead IR node gives three printers a second, contradictory thunk emitter
+
+- Status: open
+- Component: compiler
+- Found while fixing finding 1.
+
+### Observed
+
+`IExpr(IDoBlock)` (`Grammars/Translator/Imperative.hs:144`) has **no producer
+anywhere in the compiler**. Every effect thunk is emitted by `lcMakeDoBlock`
+instead. Three printers nonetheless implement `IDoBlock`, and two of them
+contradict the live emitter for their own member:
+
+| site | dead `IDoBlock` says | live `lcMakeDoBlock` says |
+|---|---|---|
+| `Members/CppPrinter.hs:96` | `[&](){...}` capture by reference | `[=](){...}` capture by copy (`Members/Cpp.hs:886`) |
+| `Members/RustPrinter.hs:92` | `move \|\| { ... }` | now conditional (`Members/Rust.hs`) |
+| `Grammars/Translator/Generic.hs:1085` | template-driven | template-driven |
+
+### Impact
+
+It is an active trap rather than mere clutter. Reading `CppPrinter.hs:96` says
+C++ captures by reference, which is false and is the opposite of the safety
+property the live code depends on -- it cost time on exactly this bug. And
+`RustPrinter.hs:92` is a second, independent `move` emitter, so the next person
+fixing thunk capture in the Rust member can change it, observe no effect, and
+conclude the fix does not work.
+
+### Fix
+
+Delete the constructor and its three printer cases. Left out of the capture-mode
+fix deliberately: removing a shared IR constructor is a separate change from
+correcting one member's capture semantics.
