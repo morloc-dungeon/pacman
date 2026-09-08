@@ -148,17 +148,10 @@ withSaveFile :: Str -> GameState -> GameState
 commands :: PacmanCommands
 commands = ({newGame = newGame, keyOf = keyOf, step = step, view = view} :: PacmanCommands)
 
---' Which games should be written out. Empty means "do not write". The engine
---' answers this because only the engine knows whether a game is worth keeping.
---'
---' FINDINGS #2: this exists as a list rather than a condition because a
---' non-recursive guard with effectful arms miscompiles in a Rust pool. Carrying
---' the choice as data keeps the branch on the pure side.
-toSave :: (Bool, GameState) -> [GameState]
-
---' Apply an effectful action to every element. A general combinator the
---' standard library does not offer yet; `mapE_` is the name it should have.
-eachE :: [a] -> (a -> <IO, Err> ()) -> <IO, Err> ()
+--' The form in which a game is written out. A saved game is stored mid-play:
+--' the outcome that ended the session is not part of it, or resuming would land
+--' on a finished board.
+forSaving :: GameState -> GameState
 
 --' Apply a whole script of commands. This is the entire frontend contract for
 --' a non-interactive driver: tests and replays need nothing more.

@@ -934,22 +934,12 @@ pub fn pac_view(s: &PacState) -> PacFrame {
 // ---------------------------------------------------------------------------
 // Persistence support
 
-pub fn pac_to_save(r: &(bool, PacState)) -> Vec<PacState> {
-    if r.0 {
-        let mut s = r.1.clone();
-        // A saved game is stored mid-play: the outcome that ended the session
-        // is not part of it, or resuming would land on a finished game.
-        s.outcome = 0;
-        vec![s]
-    } else {
-        Vec::new()
-    }
-}
-
-pub fn pac_each<A, F: Fn(&A)>(xs: &Vec<A>, f: F) {
-    for x in xs.iter() {
-        f(x);
-    }
+pub fn pac_for_saving(s: &PacState) -> PacState {
+    let mut out = s.clone();
+    // A saved game is stored mid-play: the outcome that ended the session is
+    // not part of it, or resuming would land on a finished game.
+    out.outcome = 0;
+    out
 }
 
 // ---------------------------------------------------------------------------

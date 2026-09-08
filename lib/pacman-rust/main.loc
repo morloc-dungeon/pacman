@@ -25,6 +25,5 @@ source Rust from "engine.rs"
   , "pac_maze_problems" as mazeProblems
   , "pac_level_difficulty" as levelDifficulty
   , "pac_difficulty_problems" as difficultyProblems
-  , "pac_to_save" as toSave
-  , "pac_each" as eachE
+  , "pac_for_saving" as forSaving
   )

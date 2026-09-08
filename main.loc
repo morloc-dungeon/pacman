@@ -23,17 +23,19 @@ type SaveFile = Str
 --' \ when you leave with `s`.
 run :: SaveFile -> <IO, Err> ()
 run path = do
-  -- FINDINGS #1: `fresh` is bound rather than written inline so that the two
-  -- arms of the `@catch` below capture a local each. Written inline, both arms
-  -- close over `path` and the second one fails to borrow it.
-  let fresh = withSaveFile path (newGame 3)
-  s0 <- resume path fresh
+  s0 <- resume path (withSaveFile path (newGame 3))
   r <- tuiRun commands s0
-  eachE (toSave r) saveOne
+  keep r
 
 --' Read a saved game, or start the one we were given.
 resume :: Str -> GameState -> <IO> GameState
 resume path fresh = @catch (@load path :: <IO, Err> GameState) fresh
+
+--' Write the game out, if the engine asked for it.
+keep :: (Bool, GameState) -> <IO, Err> ()
+keep r
+  ? .0 r = saveOne (forSaving (.1 r))
+  : noop
 
 --' Write one game to its own save file.
 saveOne :: GameState -> <IO, Err> ()

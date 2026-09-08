@@ -1,460 +1,174 @@
 # Findings
 
-Bugs and friction found while building this demo. Each entry says what it
-blocked and, where a workaround is in the tree, how to undo it once the bug is
-fixed. Search the source for `FINDINGS #n` to find every workaround site.
+Bugs found while building this demo. All seven are fixed. Nothing in this tree
+works around a compiler defect any more -- every `FINDINGS #n` marker is gone
+and the code that carried one is written the way it wanted to be written, which
+is the check that the fixes actually landed.
+
+Numbers are permanent and are never reused.
 
 ---
 
-## 1. Rust pool: a generated thunk moves every non-Copy local it touches
+## 1. A generated thunk moved every non-Copy local it touched
 
-- Status: FIXED, compiler 6338b8e7 ("rust: capture an effect thunk by value only
-  when it escapes"). A thunk now captures by value only where the frame's
-  signature lets a closure leave it; everywhere else it borrows. Golden
-  `rust-thunk-capture`. The workaround below is still in this tree and can now
-  be undone.
-- Component: compiler (Rust member)
-- morloc: 0.102.1, cargo 1.98.0
-- Severity: blocking. Any Rust morloc program that writes a file and then keeps
-  using the values it wrote hits this.
+*Fixed: compiler `6338b8e7`.*
 
-### Observed
+Every effect thunk in a Rust pool was built as a `move` closure, so a value it
+merely read was consumed and could not be read again. Writing a file and then
+using the path, or naming one value in both arms of a `@catch`, would not
+compile.
 
-`RustPrinter.hs:92` (`printExpr (IDoBlock e) = "move || { " ...`) and
-`Rust.hs:1564-1565` (`lcMakeDoBlock`) emit every generated thunk as a `move`
-closure. The thunks are immediately invoked -- `(move || { .. })()` -- or handed
-straight to `rustmorloc::mlc_catch`, so nothing escapes the frame and the `move`
-buys nothing. But `move` captures *every* referenced variable by value, so a
-non-Copy local the thunk only borrows is moved out and every later use of it is
-`error[E0382]: borrow of moved value`.
+The Rust member was mirroring the C++ member, which captures by copy for a real
+reason: a thunk that is a manifold's return value outlives the frame and must
+own what it names. But a copy leaves the original intact and a move does not. A
+thunk now captures by value only where the frame's signature lets a closure
+escape, which is exactly the manifold return, and by reference everywhere else.
+The predicate is read from the same type that produces the signature, so the
+capture mode and the return type cannot disagree.
 
-Nine lines reproduce it:
-
-```morloc
-module main (f)
-
-import root-rust
-
-f :: Str -> <IO, Err> U64
-f p = do
-  @save 0 p [1, 2, 3]
-  xs <- @load p :: <IO, Err> [Int]
-  size xs
-```
-
-```
-error[E0382]: borrow of moved value: `n0`
-82 |     let n1363: () = (move || {
-   |                      ------- value moved into closure here
-84 |         rustmorloc::save_voidstar(&(n3), schema(1), (0 as i64), &(n0))
-   |                                                                  ---- variable moved due to use in closure
-85 |     })();
-86 |     let n2: Vec<i64> = rustmorloc::load::<Vec<i64>>(schema(1), &(n0));
-   |                                                                ^^^^^ value borrowed here after move
-```
-
-The generated code already clones where it needs an owned value
-(`&(n1.clone())` inside the closure), so the outer `move` is the only thing
-taking ownership.
-
-### Scope (measured)
-
-- Both `@save` statements and both `@catch` arms are affected. `@catch (@load p) dflt`
-  twice over the same `p` fails the same way.
-- It is not confined to the top dispatch manifold: the tail-recursion lowering
-  hits it too, on the `let mut n2: String` the loop owns.
-- Isolating the `@save` in its own morloc function does **not** help -- morloc
-  inlines it back into the caller's manifold.
-- Effectful *sourced* calls are fine: they become their own `fn` with no
-  captures.
-
-The practical rule today: **a non-Copy value may be touched by at most one
-generated thunk in a manifold, and never used afterwards.**
-
-### Guess (unverified)
-
-Dropping `move` should be both sufficient and safe. Rust 2021 infers captures
-per variable from use, so a thunk that only borrows would borrow, and a thunk
-that returns a captured value by value would still capture it by value and infer
-`FnOnce`. Nothing here outlives the frame.
-
-### Workaround in this demo
-
-The game saves on exit rather than mid-play: the TUI returns `(True, state)`
-when the player asks to save, and `main.loc` writes the file as the last
-statement of `run`, with nothing using `state` afterwards. Mid-game save
-requires re-entering the TUI after the write, which needs the state after the
-`@save` thunk and does not compile.
-
-*Undo:* `lib/tui/tui.rs` and `main.loc`, marked `FINDINGS #1`. Restore the
-`playLoop` / `resume` recursion described in the plan.
+Golden: `rust-thunk-capture`.
 
 ---
 
-## 2. Rust pool: a non-recursive guard with effectful arms emits unforced closures
+## 2. A conditional with effectful arms did not compile
 
-- Status: open
-- Component: compiler (Rust member)
-- morloc: 0.102.1, cargo 1.98.0
-- Severity: blocking. There is no other conditional in the language, so this is
-  "you cannot write `if` around an effect" in a Rust pool.
+*Fixed: compiler `65ae257e` and `68e23a32`.*
 
-### Observed
+There is no conditional in morloc but the guard, so this was "you cannot write
+`if` around an effect" in a Rust pool. Only a recursive guard worked, because the
+tail-recursion lowering builds one differently.
 
-A guard whose arms are effectful lowers each arm to a closure and then never
-forces it, so the `if` yields a closure where the manifold expects the value:
+A deferred effect is carried as a nullary thunk, and two arms producing thunks
+produce two different thunk types that no single binding can name. Both
+positions a conditional can occupy needed a rule, and the second only surfaced
+when this demo's save decision was rewritten as an ordinary guard:
 
-```morloc
-module main (f)
+- forced on the spot, the force distributes over the arms and the conditional
+  becomes eager, yielding the value type the arms agree on;
+- returned rather than used, the suspension commutes outwards into one thunk
+  whose body is the eager conditional.
 
-import root-rust
+The narrower rule these replace recognised only arms already wrapped as thunks
+and gave up on the rest.
 
-source Rust from "own.rs" ("rp_emit" as emit)
-emit :: Int -> <IO> Int
-
-f :: Bool -> <IO> Int
-f b
-  ? b = emit 1
-  : emit 2
-```
-
-```
-error[E0308]: mismatched types
-   --> src/main.rs:329:9
-328 |        let helper0: () = if (n26) {
-    |  ________________________-
-329 | |/         move || {
-...
-334 | ||         }
-    | ||_________^ expected `()`, found closure
-```
-
-### Scope (measured)
-
-- Fails with `<IO> Int` and with `<IO> ()`; with two sourced calls, with an
-  intrinsic (`@save`) in one arm, and with a `do` block in one arm. The arms do
-  not have to differ in purity.
-- A **pure** guard returning `()` builds fine.
-- A **recursive** guard with effectful arms builds fine -- the tail-recursion
-  lowering forces the arms. The golden `recursion-loop-io-rust` still passes,
-  so this is a gap in the plain conditional lowering, not a regression in that
-  path.
-
-This is broader than the note recorded in `tooling/meco/CLAUDE.md`, which
-describes it as a guard "whose arms mix a pure value and an effectful one". Two
-effectful arms fail just as reliably; what matters is whether the enclosing
-function recurses.
-
-### Cause (found while fixing finding 1, not yet fixed)
-
-`rustMakeIf` (`Members/Rust.hs:1699`) annotates the conditional's result
-binding with `rustTypeOf (typeFof origExpr)`, and `rustTypeOf` erases the effect
-row -- an `<IO> Int` renders as `i64`. But a deferred effect is represented as a
-nullary thunk, so the arms are `impl Fn() -> i64`, and the binding is declared
-with the value type the thunk would produce rather than the thunk's own type:
-
-```
-78 | unsafe fn m1355() -> impl Fn() -> i64 {
-   |                      ---------------- the found opaque type
-99 |         n2
-   |         ^^ expected `i64`, found opaque type
-```
-
-The sibling `rustMakeLet` already handles this: `isFunctionTypeF` reports true
-for an `EffectF` type and the let omits its annotation, letting Rust infer the
-closure. `rustMakeIf` consults nothing. A recursive function escapes because the
-tail-recursion lowering builds the conditional differently.
-
-This is a **different defect from finding 1**, which is about how a thunk
-captures. Both are consequences of representing a deferred effect as a Rust
-closure without one discipline covering every place such a value is bound, but
-they are separate fixes and neither implies the other.
-
-### Workaround in this demo
-
-There is no morloc-level conditional that survives, so the branch moves into
-Rust and is carried as data: a pure function returns a list of the games that
-should be written (empty or one), and an effectful action is applied to each.
-See `toSave` and `eachE` in `lib/pacman/main.loc`, marked `FINDINGS #2`.
-
-*Undo:* replace `eachE (toSave r) saveOne` in `main.loc` with the guard, and
-delete `toSave` / `eachE`.
+Golden: `rust-effect-conditional`.
 
 ---
 
-## 3. An optional argument `?T` is still required on the command line
+## 3. An optional argument was required on the command line
 
-- Status: open
-- Component: nexus (CLI)
-- morloc: 0.102.1
-- Severity: moderate. `?T` is the obvious way to spell an optional argument and
-  it does not work; the failure is at the CLI, not in the type.
+*Fixed: compiler `6c54f939`.*
 
-### Observed
+A program's three published views disagreed about its own interface: the JSON
+help and the MCP tool shapes both reported an optional argument as not required,
+while the parser demanded it. Omitting one now means null, which for a string
+argument is the only way to express null at all -- a bare `null` on the command
+line is the four-letter word.
 
-```morloc
-module main (f, g)
+Two things came out of pushing on it. An absent argument is dispatched without
+the source and format vocabulary, which describes how to read a token and would
+otherwise have sent an argument declared as a file path looking for a file named
+`null`. And a required positional may no longer follow an optional one, since an
+omitted argument can only be the last.
 
-import root-rust
-
-source Rust from "own.rs" ("ro_show" as f, "ro_two" as g)
-f :: ?Str -> Str
-g :: Int -> Int
-```
-
-```
-$ ./ro f
-error: the following required arguments were not provided:
-  <arg0>
-$ ./ro f hello
-"got hello"
-```
-
-`--help` lists the argument under `Positional arguments:` with `type: ?Str`, so
-the optionality is known and simply not acted on. Passing the literal `null`
-works, so the wire side is fine.
-
-Two smaller things in the same output: the error names `<arg0>` rather than the
-argument's `@metavar`, and a single-command program prints
-`Usage: <prog> <nexus_options> @ <command_options>` rather than naming its one
-command and its flags.
-
-### Workaround in this demo
-
-The save file is a `Str` behind a type alias carrying `@arg -f/--file` and
-`@default "pacman.sav"`, which produces a genuine optional flag. This is nicer
-than the `?Str` positional would have been, so it is not marked as a workaround
-in the source -- but `?T` was the first thing tried.
+Goldens: `optional-json`, `optional-positional-order`.
 
 ---
 
-## Note: these were found against a modified compiler
+## 4. The manual described local imports backwards
 
-The compiler working tree at `morloc-workspace/compiler/morloc` has uncommitted
-changes while this demo was built (another session is working on
-`CodeGenerator/Reduce.hs`), and the installed `morloc 0.102.1` was built from
-them. One visible symptom is a `MECOTRACE ...` dump on stderr from a
-`Debug.Trace.trace` at `Reduce.hs:150`, tens of kilobytes per build, on any
-program with an `EvalN` over a record.
+*Fixed: docs `4d55bd3`, report `0072` closed as not-a-bug.*
 
-That trace is someone's live debugging and is not reported here as a defect.
-It does mean every reproduction above should be re-run against a clean build
-before being treated as settled -- particularly finding 2, since the
-in-flight edit is to the force-cancellation logic that decides whether a guard
-arm gets forced.
+The manual said three times that a dot-prefixed import resolves against the
+directory of the file that writes it. It resolves against the project root. The
+worked example was the compiler's own regression test for the feature with the
+wrong rule attached, resolving to a path that cannot exist.
+
+The same block listed the two candidate paths in the wrong order. And the rule
+readers confuse this one with -- a `source` path resolves against the file that
+names it -- was documented nowhere, so it is now stated alongside.
 
 ---
 
-## 4. The manual describes local import resolution backwards
+## 5. A thunk moved a value another thunk was still reading
 
-- Status: open
-- Component: docs
-- Where: `docs/morloc-project.github.io/src/content/features-modules.asc:100`
-  and `:179-188`
+*Fixed: compiler `65ae257e`.*
 
-### Expected (what the manual says)
+`@catch (f v) v` did not compile: one arm reads the list while the other yields
+it, and yielding took it away from the reader.
 
-> The dot prefix tells the compiler to look for the module relative to the
-> directory of the importing file, not in the system library.
+A thunk's result leaves the thunk by value, which makes it an owned sink like a
+container element, and every other owned sink already copies a value it does not
+own. A thunk's body was not passed through that adaptation at all.
 
-and, with a worked example:
-
-> Local modules can also import other local modules. The path is always
-> relative to the importing file. For example, if `bar/baz/main.loc` needs to
-> import a sibling at `bif/biz/`, it writes `import .bif.biz (mul)`. This
-> resolves relative to `bar/baz/`, looking for `bar/baz/bif/biz/main.loc`.
-
-### Observed
-
-A dotted import resolves relative to the **project root** -- the directory of
-the entry file passed to `morloc make` -- not the importing file.
-`Frontend/API.hs:95` sets `stateProjectRoot` from the entry file's directory and
-`Module.hs:376` joins every dotted import onto it.
-
-The manual's own example is the counter-example. The golden test that exercises
-it, `test-suite/golden-tests/local-import-cousin-py`, puts `bif/biz/` at the
-project root, not at `bar/baz/bif/biz/`, and passes:
-
-```
-local-import-cousin-py/
-  main.loc
-  bar/baz/main.loc      <- contains `import .bif.biz (mul)`
-  bif/biz/main.loc      <- resolved here, from the ROOT
-```
-
-This demo is a second witness: `lib/tui/main.loc` imports its sibling as
-`import .lib.pacman`, not `import .pacman`.
-
-### Impact
-
-Anyone laying out a multi-module project from the manual will write imports
-that do not resolve, and the error will look like a missing module. The rule to
-document is: `source` paths are relative to the file that names them, dotted
-imports are relative to the project root.
+Golden: `rust-thunk-capture`, the `armShare` case.
 
 ---
 
-## 5. Rust pool: a thunk moves a value another thunk is still borrowing
+## 6. A dead node gave three printers a contradictory thunk emitter
 
-- Status: open
-- Component: compiler (Rust member)
-- morloc: 0.102.1
-- Found while fixing finding 1; it is a **different** defect and finding 1's fix
-  does not touch it.
+*Fixed: compiler `65ae257e`.*
 
-### Observed
+An instruction in the intermediate language had no producer anywhere and three
+printers implementing it, two of which contradicted the live emitter for their
+own language -- one claiming a capture by reference where the real one captures
+by copy, the other a second and by then divergent copy of the thunk emitter.
 
-When one `@catch` arm borrows a value and the other yields it, the second
-closure moves what the first still holds:
-
-```morloc
-module main (f)
-
-import root-rust
-
-source Rust from "own.rs" ("rt_nonempty" as nonEmpty)
-nonEmpty :: [Int] -> <Err> [Int]
-
-f :: [Int] -> <IO, Err> [Int]
-f v = @catch (nonEmpty v) v
-```
-
-```rust
-pub fn rt_nonempty(xs: &Vec<i64>) -> Vec<i64> {
-    if xs.is_empty() { rustmorloc::morloc_throw("rt_nonempty: empty"); }
-    xs.clone()
-}
-```
-
-```
-error[E0505]: cannot move out of `n15` because it is borrowed
-248 |     let n15: Vec<i64> = rustmorloc::get_value::<Vec<i64>>(s15, schema(1));
-249 |     let n17 = m1631(&(n15));
-    |                     ------ borrow of `n15` occurs here
-250 |     return rustmorloc::put_value(&(rustmorloc::mlc_catch(n17, || { n15 })), schema(1));
-    |                                    ---------------------      ^^   --- move occurs due to use in closure
-```
-
-### Guess (unverified)
-
-The Rust member already classifies a value used at more than one point as
-*shared* (`varUseCountOps` / `sharedIndicesSM` in `Members/Rust.hs`), and a
-shared non-Copy value is meant to be borrowed at reference sinks and cloned at
-owned sinks, never moved. The thunk's result position looks like it is not
-treated as an owned sink, so the clone is not inserted. Either the use count
-does not see through the thunk body, or the body's tail is not run through the
-ownership adaptation.
-
-### Not covered by a test yet
-
-Deliberately left out of the `rust-thunk-capture` golden, which covers how a
-thunk *captures*; this is about what it *yields*. It needs its own test
-alongside the fix.
+Not a runtime defect, but an active trap: it cost time on finding 1, and anyone
+fixing findings 2 or 5 would have been sent to the wrong place. Deleted.
 
 ---
 
-## 6. A dead IR node gives three printers a second, contradictory thunk emitter
+## 7. A setter gave its values to the wrong fields
 
-- Status: open
-- Component: compiler
-- Found while fixing finding 1.
+*Fixed: compiler `9c826eea`.*
 
-### Observed
+Silent data corruption in four languages. A setter naming more than one field
+walked the record's declared fields and handed each the next unused value, so
+the names the author wrote chose only which fields were touched, never which
+value each received. Written in declaration order the two orderings agree, which
+is why every test had passed; written any other way the values land shuffled,
+and when the fields share a type nothing downstream can notice.
 
-`IExpr(IDoBlock)` (`Grammars/Translator/Imperative.hs:144`) has **no producer
-anywhere in the compiler**. Every effect thunk is emitted by `lcMakeDoBlock`
-instead. Three printers nonetheless implement `IDoBlock`, and two of them
-contradict the live emitter for their own member:
+**My first diagnosis of this was wrong.** I recorded it as depending on the
+record being user-mapped. It does not: the axis is whether the setter is
+evaluated in a language pool or in the nexus, whose evaluator walks the pattern
+and was always right. Records and tuples both, in Rust, C++, Python and R,
+because they share one loop.
 
-| site | dead `IDoBlock` says | live `lcMakeDoBlock` says |
-|---|---|---|
-| `Members/CppPrinter.hs:96` | `[&](){...}` capture by reference | `[=](){...}` capture by copy (`Members/Cpp.hs:886`) |
-| `Members/RustPrinter.hs:92` | `move \|\| { ... }` | now conditional (`Members/Rust.hs`) |
-| `Grammars/Translator/Generic.hs:1085` | template-driven | template-driven |
+Values are now attached to the paths they were written at before the rebuild
+starts. That also settled a second silent failure the fix would otherwise have
+left: two writes beneath one field reached that field as a single name and only
+the first was honoured.
 
-### Impact
-
-It is an active trap rather than mere clutter. Reading `CppPrinter.hs:96` says
-C++ captures by reference, which is false and is the opposite of the safety
-property the live code depends on -- it cost time on exactly this bug. And
-`RustPrinter.hs:92` is a second, independent `move` emitter, so the next person
-fixing thunk capture in the Rust member can change it, observe no effect, and
-conclude the fix does not work.
-
-### Fix
-
-Delete the constructor and its three printer cases. Left out of the capture-mode
-fix deliberately: removing a shared IR constructor is a separate change from
-correcting one member's capture semantics.
+Goldens: `pattern-setters` (Python, R, C++), `rust-patterns`,
+`setter-overlapping-paths`.
 
 ---
 
-## 7. A multi-field setter on a user-mapped record ignores the field names
+## Still open, found along the way
 
-- Status: open
-- Component: compiler (Rust member)
-- morloc: 0.102.1
-- Severity: silent data corruption. No error, no warning, wrong values.
+Not part of the seven, not fixed, and not caused by any of this work. Recorded
+here because they were found here.
 
-### Observed
+- **A Rust pool panics at teardown.** Any Rust program, including a two-line
+  one, prints `cannot access a Thread Local Storage value during or after
+  destruction` followed by `panic in a function that cannot unwind`. The result
+  is correct and the exit status is zero, which is why no golden catches it:
+  they diff stdout, and `rust-basic` writes fourteen panic lines to `obs.err`
+  while passing. Predates this work.
 
-A setter naming several fields at once assigns the values **in field-declaration
-order** rather than to the fields named, when the record is user-mapped
-(`record Rust => R = "Name"`). A compiler-generated record (`= "struct"`) is
-correct.
+- **An eta-expanded record setter is wrong in the R pool.** `map .(.x = v) rs`
+  gives the wrong answer in R and the right one in Python and C++. Single-field
+  and in declaration order, so it is not finding 7; the coverage of that shape
+  lives in the Rust golden for this reason.
 
-```morloc
-module main (mapped, generated)
-
-import root-rust
-
-record Two where
-  a :: Int
-  b :: Int
-record Rust => Two = "Two"
-
-source Rust from "own.rs" ("rw_two" as two)
-two :: Two
-
-record Gen where
-  p :: Int
-  q :: Int
-  r :: Int
-  s :: Int
-  t :: Int
-  u :: Int
-record Rust => Gen = "struct"
-
-gen0 :: Gen
-gen0 = {p = 0, q = 0, r = 0, s = 0, t = 0, u = 0}
-
-mapped :: [Int]
-mapped = let x = .(.b = 1, .a = 2) two in [.a x, .b x]
-
-generated :: [Int]
-generated = let x = .(.u = 1, .q = 2) gen0 in [.q x, .u x]
-```
-
-```rust
-#[derive(Clone)]
-pub struct Two { pub a: i64, pub b: i64 }
-pub fn rw_two() -> Two { Two { a: 0, b: 0 } }
-```
-
-```
-mapped    (want [2,1]): [1,2]     <-- values landed on the wrong fields
-generated (want [2,1]): [2,1]
-```
-
-It only bites when the written order differs from the declaration order, and
-only between fields of the same type -- a mismatched type presumably fails to
-typecheck, which is why this can sit unnoticed. Two same-typed fields swap in
-silence.
-
-### Workarounds (both verified)
-
-- Chain single-field setters: `.(.a = 2) (.(.b = 1) two)`.
-- Or write the fields in declaration order, which is correct by accident and
-  breaks silently if the record is ever reordered.
-
-The demo uses the chained form; search for `FINDINGS #7`.
+- **Six defects found while reading and left alone**, each independent of the
+  fixes above: an option's own null default still travels through the file and
+  format vocabulary; `--json-help` calls every record argument required while
+  the MCP view does not; an unrolled record behind an optional type silently
+  loses its directives; a setter's receiver is taken from the wrong end of the
+  argument list when a file-handle walk or a user pattern instance is in play; a
+  selector mixing a field name and a tuple index crashes with an unsourced
+  internal error; and a thunk-valued conditional arriving at a serialization
+  sink is never forced, because the forcing helper matches only a bare thunk.

@@ -21,6 +21,5 @@ onward w h = tuiFrame commands clearedGame w h
 lostGame :: GameState
 lostGame = runCommands (replicate 400 cmdTick) (runCommands [cmdLeft] (newGame 3))
 
---' FINDINGS #7: setting both fields in one setter would swap their values.
 clearedGame :: GameState
-clearedGame = .(.pellets = 0) (.(.outcome = 1) (newGame 3))
+clearedGame = .(.outcome = 1, .pellets = 0) (newGame 3)

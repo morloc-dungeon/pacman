@@ -168,10 +168,10 @@ testDanger =
 --' What gets written out, and in what condition.
 testKeeping :: (Int, Int) -> (Int, Int)
 testKeeping =
-  ( testEqual "a game the player kept is written" (map (\s -> .score s) (toSave (True, runCommands [cmdLeft, cmdTick] start))) [10]
-  . testEqual "one they walked away from is not" (size (toSave (False, start))) (0 :: U64)
-  . testEqual "it is stored ready to resume, not finished" (map (\s -> .outcome s) (toSave (True, runCommands [cmdSave] start))) [0]
-  . testEqual "and it remembers its own file" (map (\s -> .savefile s) (toSave (True, withSaveFile "x.sav" start))) ["x.sav"]
+  ( testEqual "a saved game keeps its score" (.score (forSaving (runCommands [cmdLeft, cmdTick] start))) 10
+  . testEqual "it is stored ready to resume, not finished" (.outcome (forSaving (runCommands [cmdSave] start))) 0
+  . testEqual "and it remembers its own file" (.savefile (forSaving (withSaveFile "x.sav" start))) "x.sav"
+  . testEqual "a running game is unchanged by it" (.outcome (forSaving start)) (.outcome start)
   )
 
 --' A game that ends on its own replaces the board with its tally. A game the
@@ -213,10 +213,8 @@ testLevels =
 --' Clearing a board offers a way on; taking it deals a new one. The cleared
 --' state is built with setters rather than played out: eating 244 pellets is a
 --' long script to write and a longer one to read.
---' FINDINGS #7: one setter naming both fields would assign them in declaration
---' order rather than by name, silently swapping the two values.
 cleared :: GameState
-cleared = .(.pellets = 0) (.(.outcome = 1) start)
+cleared = .(.outcome = 1, .pellets = 0) start
 
 nextLevel :: GameState
 nextLevel = runCommands [cmdContinue] cleared
