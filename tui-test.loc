@@ -19,7 +19,7 @@ onward :: Int -> Int -> <IO> [Str]
 onward w h = tuiFrame commands clearedGame w h
 
 lostGame :: GameState
-lostGame = runCommands (replicate 400 cmdTick) (runCommands [cmdLeft] (newGame 3))
+lostGame = runCommands (replicate 400 Tick) (runCommands [Left] (newGame 3))
 
 clearedGame :: GameState
 clearedGame = .(.outcome = 1, .pellets = 0) (newGame 3)

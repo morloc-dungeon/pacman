@@ -12,10 +12,9 @@ mod pac_tui_impl {
     use ratatui::widgets::{Block, Borders, Paragraph};
     use ratatui::Terminal;
 
+    use crate::PacCommand;
+
     const FRAME_MS: u64 = 125;
-    const CMD_TICK: i64 = 5;
-    const CMD_QUIT: i64 = 6;
-    const CMD_SAVE: i64 = 7;
 
     // The terminal, borrowed for the length of a game and handed back on the
     // way out -- including on a panic, because the pool is built with
@@ -306,7 +305,7 @@ mod pac_tui_impl {
                         continue;
                     }
                     let cmd = cmds.keyOf.call1(&key_name(k));
-                    if cmd == CMD_QUIT {
+                    if cmd == PacCommand::Quit {
                         return None;
                     }
                     let next = cmds.step.call2(&cmd, state);
@@ -339,20 +338,20 @@ mod pac_tui_impl {
         };
 
         let mut state = start.clone();
-        let mut last = CMD_TICK;
+        let mut last = PacCommand::Tick;
         let save = loop {
             let frame = cmds.view.call1(&state);
             let _ = term.draw(|f| draw(f, &frame));
             if frame.done {
                 // A game that ended on its own shows its tally, and may offer a
                 // way on; one the player walked out of does neither.
-                if last == CMD_QUIT || last == CMD_SAVE {
+                if last == PacCommand::Quit || last == PacCommand::Save {
                     break frame.save;
                 }
                 match settle(&mut term, cmds, &state) {
                     Some(next) => {
                         state = next;
-                        last = CMD_TICK;
+                        last = PacCommand::Tick;
                         continue;
                     }
                     None => break frame.save,
@@ -363,9 +362,9 @@ mod pac_tui_impl {
                     Ok(event::Event::Key(k)) if k.kind == event::KeyEventKind::Press => {
                         cmds.keyOf.call1(&key_name(k))
                     }
-                    _ => CMD_TICK,
+                    _ => PacCommand::Tick,
                 },
-                _ => CMD_TICK,
+                _ => PacCommand::Tick,
             };
             last = cmd;
             state = cmds.step.call2(&cmd, &state);

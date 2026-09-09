@@ -56,6 +56,34 @@ Because everything crossing that boundary is pure and total, the same engine
 drives the interactive game, the test suite, and the off-screen renderer with
 no conditional compilation and no test doubles.
 
+## A command is a closed set
+
+`Command` is a `data` declaration: nine alternatives and no payload.
+
+```morloc
+data Command = None | Up | Down | Left | Right | Tick | Quit | Save | Continue
+```
+
+The alternative -- `type Command = Int` and nine named integers -- says the
+same thing in a way nothing can check. `step 47` typechecks under it, the
+frontend holds a bare `i64`, and every arm of the engine's `match` is a number
+whose meaning lives in a comment.
+
+Three things follow, and none of them cost anything:
+
+- **A command is one byte on the wire.** The tag is the constructor's position
+  in the declaration, so an ordinal is the representation rather than an
+  encoding of it. A replay script is a byte buffer.
+- **The name travels with the value.** The constructor names ride in the wire
+  schema, so a command renders as `"Quit"` and not `6`, and `--json-help`
+  advertises the closed set to a machine reading the interface.
+- **The engine's `match` is exhaustive.** The Rust `enum` behind the type has
+  the same nine arms, so a tenth command cannot be added without the compiler
+  naming every place that has to answer for it.
+
+Declaration order is part of the wire contract: appending an alternative leaves
+every existing value byte-identical, and reordering breaks them.
+
 ## Levels are plugins
 
 The map for a level is one function:
@@ -170,7 +198,7 @@ test run also writes a save file with one program and reads it back with
 another, and renders a frame through ratatui's off-screen backend, so the
 drawing code is covered without a terminal.
 
-42 tests cover key mapping, the starting board, movement and walls, the tunnel,
+80 tests cover key mapping, the starting board, movement and walls, the tunnel,
 energizers and frightened ghosts, dying, and what a save file is allowed to
 contain. Eating a frightened ghost is not covered: frightened ghosts flee, and
 no short scripted route catches one.

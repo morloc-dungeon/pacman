@@ -6,38 +6,21 @@ import root
 
 --' A player instruction. The engine interprets these; a frontend obtains one
 --' from `keyOf` and never constructs one itself.
-type Command = Int
-
-cmdNone :: Command
-cmdNone = 0
-
-cmdUp :: Command
-cmdUp = 1
-
-cmdDown :: Command
-cmdDown = 2
-
-cmdLeft :: Command
-cmdLeft = 3
-
-cmdRight :: Command
-cmdRight = 4
-
---' Advance the world one frame with no player input.
-cmdTick :: Command
-cmdTick = 5
-
---' Leave without writing a save file.
-cmdQuit :: Command
-cmdQuit = 6
-
---' Leave and write a save file.
-cmdSave :: Command
-cmdSave = 7
-
---' Start the next level. Only means anything once one is cleared.
-cmdContinue :: Command
-cmdContinue = 8
+--'
+--' \ `None` is what an unrecognised key becomes, and is inert. `Tick` advances
+--' \ the world one frame with no player input. `Quit` leaves without writing a
+--' \ save file and `Save` leaves and writes one. `Continue` starts the next
+--' \ level and means nothing until one is cleared.
+data Command
+  = None
+  | Up
+  | Down
+  | Left
+  | Right
+  | Tick
+  | Quit
+  | Save
+  | Continue
 
 --' A ghost. `kind` selects the targeting rule (0 Blinky, 1 Pinky, 2 Inky,
 --' 3 Clyde); `state` is 0 in the house, 1 hunting, 2 frightened, 3 eyes
@@ -132,7 +115,7 @@ difficultyProblems :: Difficulty -> [Str]
 mazeProblems :: [Str] -> [Str]
 
 --' Translate a key name ("up", "a", "Escape", ...) into a command. An
---' unrecognised name is `cmdNone`.
+--' unrecognised name is `None`.
 keyOf :: Str -> Command
 
 --' Apply one command. Total: an illegal move is a no-op, not an error.

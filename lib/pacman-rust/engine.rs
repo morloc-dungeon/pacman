@@ -55,13 +55,30 @@ pub struct PacFrame {
     pub message: Vec<String>,
 }
 
+// The player instruction set. `data Rust => Command = "PacCommand"` in the
+// interface's Rust module binds the morloc type to this definition, so the
+// discriminant is the wire tag and the declaration orders must agree.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PacCommand {
+    None = 0,
+    Up = 1,
+    Down = 2,
+    Left = 3,
+    Right = 4,
+    Tick = 5,
+    Quit = 6,
+    Save = 7,
+    Continue = 8,
+}
+
 // The engine bundled as a value. morloc builds this struct; the fields are the
 // fat trait objects a function value is stored in.
 #[derive(Clone)]
 pub struct PacCommands {
     pub newGame: std::rc::Rc<dyn rustmorloc::MorlocFn1<i64, PacState>>,
-    pub keyOf: std::rc::Rc<dyn rustmorloc::MorlocFn1<String, i64>>,
-    pub step: std::rc::Rc<dyn rustmorloc::MorlocFn2<i64, PacState, PacState>>,
+    pub keyOf: std::rc::Rc<dyn rustmorloc::MorlocFn1<String, PacCommand>>,
+    pub step: std::rc::Rc<dyn rustmorloc::MorlocFn2<PacCommand, PacState, PacState>>,
     pub view: std::rc::Rc<dyn rustmorloc::MorlocFn1<PacState, PacFrame>>,
 }
 
@@ -533,27 +550,32 @@ pub fn pac_with_save_file(path: &String, s: &PacState) -> PacState {
 // ---------------------------------------------------------------------------
 // Input
 
-pub fn pac_key_of(k: &String) -> i64 {
+pub fn pac_key_of(k: &String) -> PacCommand {
     match k.as_str() {
-        "up" | "k" | "w" => 1,
-        "down" | "j" => 2,
-        "left" | "h" | "a" => 3,
-        "right" | "l" | "d" => 4,
-        "s" => 7,
-        "c" => 8,
-        "q" | "Escape" => 6,
-        _ => 0,
+        "up" | "k" | "w" => PacCommand::Up,
+        "down" | "j" => PacCommand::Down,
+        "left" | "h" | "a" => PacCommand::Left,
+        "right" | "l" | "d" => PacCommand::Right,
+        "s" => PacCommand::Save,
+        "c" => PacCommand::Continue,
+        "q" | "Escape" => PacCommand::Quit,
+        _ => PacCommand::None,
     }
 }
 
-// Command direction (1..4) to internal direction (0..3).
-fn pac_cmd_dir(cmd: i64) -> i64 {
+// A movement command to an internal direction (0..3), in the arcade's
+// tie-breaking order. Anything that is not a movement has no direction.
+fn pac_cmd_dir(cmd: PacCommand) -> i64 {
     match cmd {
-        1 => 0,
-        3 => 1,
-        2 => 2,
-        4 => 3,
-        _ => -1,
+        PacCommand::Up => 0,
+        PacCommand::Left => 1,
+        PacCommand::Down => 2,
+        PacCommand::Right => 3,
+        PacCommand::None
+        | PacCommand::Tick
+        | PacCommand::Quit
+        | PacCommand::Save
+        | PacCommand::Continue => -1,
     }
 }
 
@@ -807,33 +829,33 @@ fn pac_tick(s: &PacState) -> PacState {
     out
 }
 
-pub fn pac_step(cmd: i64, s: &PacState) -> PacState {
+pub fn pac_step(cmd: PacCommand, s: &PacState) -> PacState {
     if s.outcome != 0 {
         // A finished game takes no orders except the one that starts the next
         // board, and only when there is a next board to start.
-        if cmd == 8 && s.outcome == 1 {
+        if cmd == PacCommand::Continue && s.outcome == 1 {
             return pac_next_level(s);
         }
         return s.clone();
     }
     match cmd {
-        6 => {
+        PacCommand::Quit => {
             let mut out = s.clone();
             out.outcome = 3;
             out
         }
-        7 => {
+        PacCommand::Save => {
             let mut out = s.clone();
             out.outcome = 4;
             out
         }
-        5 => pac_tick(s),
-        1 | 2 | 3 | 4 => {
+        PacCommand::Tick => pac_tick(s),
+        PacCommand::Up | PacCommand::Down | PacCommand::Left | PacCommand::Right => {
             let mut out = s.clone();
             out.want = pac_cmd_dir(cmd);
             out
         }
-        _ => s.clone(),
+        PacCommand::None | PacCommand::Continue => s.clone(),
     }
 }
 

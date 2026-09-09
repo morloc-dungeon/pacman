@@ -9,6 +9,9 @@ module (*)
 import .lib.pacman
 import root-rust
 
+-- FINDINGS #12: an unmapped `data` type cannot reach a Rust pool, so the enum
+-- is written out in engine.rs and bound here rather than generated.
+data   Rust => Command = "PacCommand"
 record Rust => Ghost = "PacGhost"
 record Rust => GameState = "PacState"
 record Rust => Frame = "PacFrame"

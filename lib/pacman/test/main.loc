@@ -40,15 +40,15 @@ runTests =
 
 testKeys :: (Int, Int) -> (Int, Int)
 testKeys =
-  ( testEqual "up arrow" (keyOf "up") cmdUp
-  . testEqual "down arrow" (keyOf "down") cmdDown
-  . testEqual "left arrow" (keyOf "left") cmdLeft
-  . testEqual "right arrow" (keyOf "right") cmdRight
-  . testEqual "vim h" (keyOf "h") cmdLeft
-  . testEqual "save" (keyOf "s") cmdSave
-  . testEqual "quit" (keyOf "q") cmdQuit
-  . testEqual "escape" (keyOf "Escape") cmdQuit
-  . testEqual "unknown key is inert" (keyOf "zzz") cmdNone
+  ( testEqual "up arrow" (keyOf "up") Up
+  . testEqual "down arrow" (keyOf "down") Down
+  . testEqual "left arrow" (keyOf "left") Left
+  . testEqual "right arrow" (keyOf "right") Right
+  . testEqual "vim h" (keyOf "h") Left
+  . testEqual "save" (keyOf "s") Save
+  . testEqual "quit" (keyOf "q") Quit
+  . testEqual "escape" (keyOf "Escape") Quit
+  . testEqual "unknown key is inert" (keyOf "zzz") None
   )
 
 start :: GameState
@@ -68,15 +68,15 @@ testStart =
 --' Walking left from the start eats the dot at the tile Pac-Man arrives on.
 testMoving :: (Int, Int) -> (Int, Int)
 testMoving =
-  ( testEqual "one step left eats a dot" (.score (runCommands [cmdLeft, cmdTick] start)) 10
-  . testEqual "a dot leaves the board" (.pellets (runCommands [cmdLeft, cmdTick] start)) ((.pellets start) - 1)
+  ( testEqual "one step left eats a dot" (.score (runCommands [Left, Tick] start)) 10
+  . testEqual "a dot leaves the board" (.pellets (runCommands [Left, Tick] start)) ((.pellets start) - 1)
   . testEqual "a board starts with 244 pellets" (.pellets start) 244
-  . testEqual "an illegal turn is ignored and he keeps going" (.pac (runCommands [cmdUp, cmdTick] start)) (23, 12)
-  . testEqual "a wall stops him" (.pac (runCommands (replicate 10 cmdTick) (runCommands [cmdLeft] start))) (23, 6)
-  . testEqual "he ate the whole corridor on the way" (.score (runCommands (replicate 10 cmdTick) (runCommands [cmdLeft] start))) 70
-  . testEqual "quitting ends the game" (.outcome (runCommands [cmdQuit] start)) 3
-  . testEqual "saving ends the game" (.save (view (runCommands [cmdSave] start))) True
-  . testEqual "a finished game ignores input" (.outcome (runCommands [cmdQuit, cmdTick, cmdLeft] start)) 3
+  . testEqual "an illegal turn is ignored and he keeps going" (.pac (runCommands [Up, Tick] start)) (23, 12)
+  . testEqual "a wall stops him" (.pac (runCommands (replicate 10 Tick) (runCommands [Left] start))) (23, 6)
+  . testEqual "he ate the whole corridor on the way" (.score (runCommands (replicate 10 Tick) (runCommands [Left] start))) 70
+  . testEqual "quitting ends the game" (.outcome (runCommands [Quit] start)) 3
+  . testEqual "saving ends the game" (.save (view (runCommands [Save] start))) True
+  . testEqual "a finished game ignores input" (.outcome (runCommands [Quit, Tick, Left] start)) 3
   )
 
 -------------------------------------------------------------------------------
@@ -99,7 +99,7 @@ showSave path = do
 
 --' A fixed script: turn left, then let twelve frames pass.
 replay :: GameState
-replay = runCommands (replicate 12 cmdTick) (runCommands [cmdLeft] start)
+replay = runCommands (replicate 12 Tick) (runCommands [Left] start)
 
 frameLines :: GameState -> [Str]
 frameLines s = concat [[.status (view s)], .rows (view s)]
@@ -111,23 +111,23 @@ frameLines s = concat [[.status (view s)], .rows (view s)]
 --' Left along the bottom corridor, up the west side, into the tunnel mouth.
 toTunnelMouth :: [Command]
 toTunnelMouth = concat
-  [ [cmdLeft], replicate 7 cmdTick
-  , [cmdUp], replicate 9 cmdTick
-  , [cmdLeft], replicate 6 cmdTick
+  [ [Left], replicate 7 Tick
+  , [Up], replicate 9 Tick
+  , [Left], replicate 6 Tick
   ]
 
 --' One step further, which leaves the board on the west and returns on the east.
 throughTunnel :: [Command]
-throughTunnel = concat [toTunnelMouth, [cmdTick]]
+throughTunnel = concat [toTunnelMouth, [Tick]]
 
 --' Down and around to the energizer in the south-west pocket.
 toEnergizer :: [Command]
 toEnergizer = concat
-  [ [cmdLeft], replicate 7 cmdTick
-  , [cmdDown], replicate 3 cmdTick
-  , [cmdLeft], replicate 3 cmdTick
-  , [cmdUp], replicate 3 cmdTick
-  , [cmdLeft], replicate 2 cmdTick
+  [ [Left], replicate 7 Tick
+  , [Down], replicate 3 Tick
+  , [Left], replicate 3 Tick
+  , [Up], replicate 3 Tick
+  , [Left], replicate 2 Tick
   ]
 
 ghostStates :: GameState -> [Int]
@@ -148,13 +148,13 @@ testPower =
   . testEqual "eighteen tiles cleared" (.pellets (runCommands toEnergizer start)) 226
   . testEqual "six seconds of fright" (.fright (runCommands toEnergizer start)) 48
   . testEqual "the ghosts on the board turn" (ghostStates (runCommands toEnergizer start)) [2, 2, 0, 0]
-  . testEqual "and they recover" (ghostStates (runCommands (replicate 50 cmdTick) (runCommands toEnergizer start))) [1, 1, 1, 0]
+  . testEqual "and they recover" (ghostStates (runCommands (replicate 50 Tick) (runCommands toEnergizer start))) [1, 1, 1, 0]
   )
 
 --' Standing still against a wall gets you caught. The clock restarts on a
 --' death, which is how the test sees that one happened.
 held :: Int -> GameState
-held n = runCommands (replicate n cmdTick) (runCommands [cmdLeft] start)
+held n = runCommands (replicate n Tick) (runCommands [Left] start)
 
 testDanger :: (Int, Int) -> (Int, Int)
 testDanger =
@@ -168,8 +168,8 @@ testDanger =
 --' What gets written out, and in what condition.
 testKeeping :: (Int, Int) -> (Int, Int)
 testKeeping =
-  ( testEqual "a saved game keeps its score" (.score (forSaving (runCommands [cmdLeft, cmdTick] start))) 10
-  . testEqual "it is stored ready to resume, not finished" (.outcome (forSaving (runCommands [cmdSave] start))) 0
+  ( testEqual "a saved game keeps its score" (.score (forSaving (runCommands [Left, Tick] start))) 10
+  . testEqual "it is stored ready to resume, not finished" (.outcome (forSaving (runCommands [Save] start))) 0
   . testEqual "and it remembers its own file" (.savefile (forSaving (withSaveFile "x.sav" start))) "x.sav"
   . testEqual "a running game is unchanged by it" (.outcome (forSaving start)) (.outcome start)
   )
@@ -189,7 +189,7 @@ testEnding =
   . testEqual "a dead player is offered no way on" (.[7] (.message (view lost))) "press q to quit"
   . testEqual "the board is untouched by it" (size (.rows (view lost))) (31 :: U64)
   . testEqual "a running game has no tally" (size (.message (view start))) (0 :: U64)
-  . testEqual "nor has one the player quit" (size (.message (view (runCommands [cmdQuit] start)))) (0 :: U64)
+  . testEqual "nor has one the player quit" (size (.message (view (runCommands [Quit] start)))) (0 :: U64)
   )
 
 --' Every map a level generator returns must be playable, and `mazeProblems` is
@@ -217,7 +217,7 @@ cleared :: GameState
 cleared = .(.outcome = 1, .pellets = 0) start
 
 nextLevel :: GameState
-nextLevel = runCommands [cmdContinue] cleared
+nextLevel = runCommands [Continue] cleared
 
 testProgress :: (Int, Int) -> (Int, Int)
 testProgress =
@@ -230,8 +230,8 @@ testProgress =
   . testEqual "so do the lives" (.lives nextLevel) (.lives cleared)
   . testEqual "there are dots to eat again" ((.pellets nextLevel) > 100) True
   . testEqual "and the game is running" (.outcome nextLevel) 0
-  . testEqual "continuing a running game does nothing" (.level (runCommands [cmdContinue] start)) 1
-  . testEqual "nor does continuing a lost one" (.level (runCommands [cmdContinue] lost)) 1
+  . testEqual "continuing a running game does nothing" (.level (runCommands [Continue] start)) 1
+  . testEqual "nor does continuing a lost one" (.level (runCommands [Continue] lost)) 1
   )
 
 --' The difficulty curve is a plugin like the map generator, so it is checked
@@ -241,7 +241,7 @@ testProgress =
 --' Hold left on a board, with the level number set and the level-one map, so
 --' only the pace differs between the runs.
 heldAt :: Int -> Int -> GameState
-heldAt lvl n = runCommands (replicate n cmdTick) (runCommands [cmdLeft] (.(.level = lvl) start))
+heldAt lvl n = runCommands (replicate n Tick) (runCommands [Left] (.(.level = lvl) start))
 
 testDifficulty :: (Int, Int) -> (Int, Int)
 testDifficulty =

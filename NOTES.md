@@ -113,3 +113,90 @@ meaning survives a terminal that cannot draw it. Here it does: a wall drawn as
 a replacement box still reads as a wall, and every actor is also distinguished
 by colour. The glyphs are written as `\u{..}` escapes, so the source file stays
 ASCII while the screen does not.
+
+## A constructor is a term, so its name is spent globally
+
+`data Command = None | Up | Down | Left | Right | Tick | Quit | Save |
+Continue` claims nine ordinary terms in the program that declares it, and
+constructors must be unique across a program. `Left` and `Right` are the names
+an `Either` would want, `None` is the name an option would want, and `Save`
+sits one capital away from `Frame.save`. This module gets them because it is
+the only one that declares an enum; a program that composes two libraries
+cannot make that assumption, and neither library can see the collision coming.
+
+The obvious dodge is to prefix -- `CmdLeft`, `CmdUp` -- which is the `cmdLeft`
+convention the enum replaced, back again. It is not taken here: the demo should
+show the form as it is meant to read, and the awkwardness belongs on the record
+rather than in the source.
+
+What makes the trade worth it is that the same rule is what buys the
+inference. A constructor's name determines its type on its own, so `step Quit`
+needs no annotation and no search among the alternatives in scope.
+
+## An enum's declaration order is a contract two files hold
+
+The tag is the constructor's position, so `lib/pacman/main.loc` fixes the wire
+format of a `Command` and `engine.rs` restates it as nine `#[repr(u8)]`
+discriminants. Nothing checks that the two agree. Reordering the morloc
+declaration compiles, passes the type checker, and produces an engine that
+reads every key as the wrong command.
+
+That duplication is a consequence of `FINDINGS #12` and not of the feature:
+a pool that generates its own enum has one declaration and no way to disagree
+with itself. It is worth removing when that finding is fixed.
+
+## Equality works here, and is not promised anywhere
+
+Derived equality is deliberately deferred, but `x == Quit` typechecks, and in
+a Rust pool it answers correctly: it lowers to the native `==` of the pool's
+enum, and Rust derives `PartialEq` on it. Nothing here writes that expression,
+but the suite leans on the same fact from the other side: `testEqual` is a
+Rust generic over `PartialEq`, so the key-mapping tests compare `Command`
+values without morloc having an opinion about it.
+
+That is a property of the backend and not of the language. `FINDINGS #14` is
+the same expression answering `FALSE` for every value in an R pool. A program
+that compares enums is relying on whichever pool it lands in, and the rule that
+eventually gets specified is free to disagree with all of them.
+
+## What argument-carrying constructors would buy here
+
+`Command` is the enum this program most obviously wanted, and it is the one it
+now has. Four other places want a sum type and cannot express it with nullary
+constructors alone. They are listed here rather than built because the form
+does not exist yet.
+
+**A frame's ending is three fields that must agree.** `Frame` carries `done`,
+`save` and `message`, and only four of the eight combinations mean anything.
+`done = False` with a non-empty `message` is representable and meaningless, and
+the TUI reconstructs the real state from the flags plus the last command it
+sent. One field would say it:
+
+```morloc
+data Ending = Running | Cleared [Str] | Lost [Str] | Leaving Bool
+```
+
+**A ghost's timer belongs to two of its four states.** `Ghost` has
+`state :: Int` and `timer :: Int`, with a comment saying the timer "counts down
+whatever the state is waiting on" -- which is a release time in the house, a
+fright countdown when frightened, and nothing at all while hunting or
+returning. `data GhostState = InHouse Int | Hunting | Frightened Int |
+Returning` puts the counter where it means something and deletes the field
+where it does not.
+
+**A map problem is a kind and a place.** `mazeProblems :: [Str] -> [Str]`
+returns English, so the suite can check that a map is clean and little else; to
+assert *which* problem, it would have to compare prose. A closed set --
+`WrongSize Int Int`, `NotSymmetric Int Int`, `UnreachablePellet Int Int`,
+`NoGhostDoor` -- lets the suite name the failure and lets a frontend decide the
+wording. `difficultyProblems` is the same shape.
+
+**A movement is one command with a direction.** `Up | Down | Left | Right`
+would collapse to `Move Direction`, which is what the engine already believes:
+`pac_cmd_dir` exists only to turn four constructors back into the one number
+the rules use. With a payload it is `Move d => want = d` and the translation
+table goes away.
+
+The first two are the ones that matter. Both are cases where the type admits
+states the program does not, and a comment is doing the work a constructor
+would do.
