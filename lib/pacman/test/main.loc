@@ -87,15 +87,19 @@ testMoving =
 -- purpose: the file is written by one process and read back by another, which
 -- is the property worth testing.
 
---' Play a fixed script, then write the result out.
-writeReplay :: Str -> <IO, Err> ()
-writeReplay path = @save 0 path replay
+--' Play a fixed script, then write the result out. A write that fails ends
+--' the run saying why.
+writeReplay :: Str -> <IO> ()
+writeReplay path = do
+  @save 0 path replay
+  ()
 
---' Read a saved game and render it.
-showSave :: Str -> <IO, Err> [Str]
+--' Read a saved game and render it. A file that will not load is fatal: the
+--' command has nothing else to show.
+showSave :: Str -> <IO> [Str]
 showSave path = do
-  s <- @load path :: <IO, Err> GameState
-  frameLines s
+  r <- (@load path :: <IO> (Try Str GameState))
+  frameLines (unwrap r)
 
 --' A fixed script: turn left, then let twelve frames pass.
 replay :: GameState

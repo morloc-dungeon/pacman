@@ -12,7 +12,7 @@ mod pac_tui_impl {
     use ratatui::widgets::{Block, Borders, Paragraph};
     use ratatui::Terminal;
 
-    use crate::PacCommand;
+    use crate::Command;
 
     const FRAME_MS: u64 = 125;
 
@@ -305,7 +305,7 @@ mod pac_tui_impl {
                         continue;
                     }
                     let cmd = cmds.keyOf.call1(&key_name(k));
-                    if cmd == PacCommand::Quit {
+                    if cmd == Command::Quit {
                         return None;
                     }
                     let next = cmds.step.call2(&cmd, state);
@@ -338,20 +338,20 @@ mod pac_tui_impl {
         };
 
         let mut state = start.clone();
-        let mut last = PacCommand::Tick;
+        let mut last = Command::Tick;
         let save = loop {
             let frame = cmds.view.call1(&state);
             let _ = term.draw(|f| draw(f, &frame));
             if frame.done {
                 // A game that ended on its own shows its tally, and may offer a
                 // way on; one the player walked out of does neither.
-                if last == PacCommand::Quit || last == PacCommand::Save {
+                if last == Command::Quit || last == Command::Save {
                     break frame.save;
                 }
                 match settle(&mut term, cmds, &state) {
                     Some(next) => {
                         state = next;
-                        last = PacCommand::Tick;
+                        last = Command::Tick;
                         continue;
                     }
                     None => break frame.save,
@@ -362,9 +362,9 @@ mod pac_tui_impl {
                     Ok(event::Event::Key(k)) if k.kind == event::KeyEventKind::Press => {
                         cmds.keyOf.call1(&key_name(k))
                     }
-                    _ => PacCommand::Tick,
+                    _ => Command::Tick,
                 },
-                _ => PacCommand::Tick,
+                _ => Command::Tick,
             };
             last = cmd;
             state = cmds.step.call2(&cmd, &state);
@@ -413,5 +413,3 @@ pub fn pac_tui_run(cmds: &PacCommands, start: &PacState) -> (bool, PacState) {
 pub fn pac_tui_frame(cmds: &PacCommands, state: &PacState, width: i64, height: i64) -> Vec<String> {
     pac_tui_impl::offscreen(cmds, state, width, height)
 }
-
-pub fn pac_tui_noop() {}

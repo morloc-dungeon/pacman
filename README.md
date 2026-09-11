@@ -215,6 +215,7 @@ finished board.
 
 ## Findings
 
-`FINDINGS.md` records the compiler bugs this demo ran into and the workarounds
-in the tree; each workaround site is marked `FINDINGS #n`. `NOTES.md` records
-the design friction -- the things that were awkward rather than wrong.
+`FINDINGS.md` records the compiler bugs this demo ran into. A workaround that
+outlives the bug is marked `FINDINGS #n` at its site; there are none at
+present. `NOTES.md` records the design friction -- the things that were awkward
+rather than wrong.

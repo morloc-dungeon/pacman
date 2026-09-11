@@ -21,22 +21,30 @@ type SaveFile = Str
 --'
 --' \ A game is resumed from the save file if one is readable, and written back
 --' \ when you leave with `s`.
-run :: SaveFile -> <IO, Err> ()
+run :: SaveFile -> <IO> ()
 run path = do
   s0 <- resume path (withSaveFile path (newGame 3))
   r <- tuiRun commands s0
   keep r
 
---' Read a saved game, or start the one we were given.
+--' Read a saved game, or start the one we were given. An unreadable file is
+--' not an error here: there is a game to play either way.
 resume :: Str -> GameState -> <IO> GameState
-resume path fresh = @catch (@load path :: <IO, Err> GameState) fresh
+resume path fresh = do
+  r <- (@load path :: <IO> (Try Str GameState))
+  match r
+    | (Ok s) = s
+    | (Err _) = fresh
 
 --' Write the game out, if the engine asked for it.
-keep :: (Bool, GameState) -> <IO, Err> ()
+keep :: (Bool, GameState) -> <IO> ()
 keep r
   ? .0 r = saveOne (forSaving (.1 r))
-  : noop
+  : ()
 
---' Write one game to its own save file.
-saveOne :: GameState -> <IO, Err> ()
-saveOne s = @save 0 (.savefile s) s
+--' Write one game to its own save file. A write that fails ends the program
+--' saying why, rather than reporting a quiet success.
+saveOne :: GameState -> <IO> ()
+saveOne s = do
+  @save 0 (.savefile s) s
+  ()

@@ -55,30 +55,13 @@ pub struct PacFrame {
     pub message: Vec<String>,
 }
 
-// The player instruction set. `data Rust => Command = "PacCommand"` in the
-// interface's Rust module binds the morloc type to this definition, so the
-// discriminant is the wire tag and the declaration orders must agree.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PacCommand {
-    None = 0,
-    Up = 1,
-    Down = 2,
-    Left = 3,
-    Right = 4,
-    Tick = 5,
-    Quit = 6,
-    Save = 7,
-    Continue = 8,
-}
-
 // The engine bundled as a value. morloc builds this struct; the fields are the
 // fat trait objects a function value is stored in.
 #[derive(Clone)]
 pub struct PacCommands {
     pub newGame: std::rc::Rc<dyn rustmorloc::MorlocFn1<i64, PacState>>,
-    pub keyOf: std::rc::Rc<dyn rustmorloc::MorlocFn1<String, PacCommand>>,
-    pub step: std::rc::Rc<dyn rustmorloc::MorlocFn2<PacCommand, PacState, PacState>>,
+    pub keyOf: std::rc::Rc<dyn rustmorloc::MorlocFn1<String, Command>>,
+    pub step: std::rc::Rc<dyn rustmorloc::MorlocFn2<Command, PacState, PacState>>,
     pub view: std::rc::Rc<dyn rustmorloc::MorlocFn1<PacState, PacFrame>>,
 }
 
@@ -550,32 +533,32 @@ pub fn pac_with_save_file(path: &String, s: &PacState) -> PacState {
 // ---------------------------------------------------------------------------
 // Input
 
-pub fn pac_key_of(k: &String) -> PacCommand {
+pub fn pac_key_of(k: &String) -> Command {
     match k.as_str() {
-        "up" | "k" | "w" => PacCommand::Up,
-        "down" | "j" => PacCommand::Down,
-        "left" | "h" | "a" => PacCommand::Left,
-        "right" | "l" | "d" => PacCommand::Right,
-        "s" => PacCommand::Save,
-        "c" => PacCommand::Continue,
-        "q" | "Escape" => PacCommand::Quit,
-        _ => PacCommand::None,
+        "up" | "k" | "w" => Command::Up,
+        "down" | "j" => Command::Down,
+        "left" | "h" | "a" => Command::Left,
+        "right" | "l" | "d" => Command::Right,
+        "s" => Command::Save,
+        "c" => Command::Continue,
+        "q" | "Escape" => Command::Quit,
+        _ => Command::None,
     }
 }
 
 // A movement command to an internal direction (0..3), in the arcade's
 // tie-breaking order. Anything that is not a movement has no direction.
-fn pac_cmd_dir(cmd: PacCommand) -> i64 {
+fn pac_cmd_dir(cmd: Command) -> i64 {
     match cmd {
-        PacCommand::Up => 0,
-        PacCommand::Left => 1,
-        PacCommand::Down => 2,
-        PacCommand::Right => 3,
-        PacCommand::None
-        | PacCommand::Tick
-        | PacCommand::Quit
-        | PacCommand::Save
-        | PacCommand::Continue => -1,
+        Command::Up => 0,
+        Command::Left => 1,
+        Command::Down => 2,
+        Command::Right => 3,
+        Command::None
+        | Command::Tick
+        | Command::Quit
+        | Command::Save
+        | Command::Continue => -1,
     }
 }
 
@@ -829,33 +812,33 @@ fn pac_tick(s: &PacState) -> PacState {
     out
 }
 
-pub fn pac_step(cmd: PacCommand, s: &PacState) -> PacState {
+pub fn pac_step(cmd: Command, s: &PacState) -> PacState {
     if s.outcome != 0 {
         // A finished game takes no orders except the one that starts the next
         // board, and only when there is a next board to start.
-        if cmd == PacCommand::Continue && s.outcome == 1 {
+        if cmd == Command::Continue && s.outcome == 1 {
             return pac_next_level(s);
         }
         return s.clone();
     }
     match cmd {
-        PacCommand::Quit => {
+        Command::Quit => {
             let mut out = s.clone();
             out.outcome = 3;
             out
         }
-        PacCommand::Save => {
+        Command::Save => {
             let mut out = s.clone();
             out.outcome = 4;
             out
         }
-        PacCommand::Tick => pac_tick(s),
-        PacCommand::Up | PacCommand::Down | PacCommand::Left | PacCommand::Right => {
+        Command::Tick => pac_tick(s),
+        Command::Up | Command::Down | Command::Left | Command::Right => {
             let mut out = s.clone();
             out.want = pac_cmd_dir(cmd);
             out
         }
-        PacCommand::None | PacCommand::Continue => s.clone(),
+        Command::None | Command::Continue => s.clone(),
     }
 }
 
