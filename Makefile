@@ -27,5 +27,5 @@ test: build
 	diff -u test/exp.txt test/obs.txt
 
 clean:
-	rm -rf $(EXE) $(EXE)-build $(TEST) $(TEST)-build $(RENDER) $(RENDER)-build
+	rm -rf $(EXE) $(TEST) $(RENDER) *-build
 	rm -f test/obs.txt test/rt.sav pacman.sav
