@@ -3,7 +3,7 @@
 --' The only module that names both an engine and a frontend. Everything it
 --' does is choose an implementation, hand it to the frontend, and own the save
 --' file. No other module in this program opens a file.
-module main (run)
+module demo-pacman (run)
 
 import .lib.pacman
 import .lib.pacman-rust
