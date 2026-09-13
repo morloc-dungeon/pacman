@@ -40,7 +40,7 @@ resume path fresh = do
 keep :: (Bool, GameState) -> <IO> ()
 keep r
   ? .0 r = saveOne (forSaving (.1 r))
-  : ()
+  : do ()
 
 --' Write one game to its own save file. A write that fails ends the program
 --' saying why, rather than reporting a quiet success.
