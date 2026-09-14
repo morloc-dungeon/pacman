@@ -4,9 +4,8 @@ Pac-Man in a terminal. The rules are a pure morloc interface, the terminal
 frontend receives that interface as a record of functions, and the two never
 mention each other.
 
-The game is the excuse. The subject is a way of structuring a morloc program
-that we expect to reuse: **an interactive shell that is handed its logic as
-data.**
+The game demos the interface between Morloc and an interactive app (in this
+case, a TUI). Morloc passes logic to the app as data, a record of functions.
 
 ## The pattern
 
@@ -15,7 +14,7 @@ data.**
                       bare signatures. No implementation, no language mappings.
 
   lib/pacman/test     the test suite. Imports the interface only, so it runs
-                      unchanged against any implementation of it.
+                      unchanged against any implementation.
 
   lib/pacman-rust     the engine: Rust representations for the interface's
                       types, and Rust functions satisfying its signatures.
@@ -56,34 +55,6 @@ Because everything crossing that boundary is pure and total, the same engine
 drives the interactive game, the test suite, and the off-screen renderer with
 no conditional compilation and no test doubles.
 
-## A command is a closed set
-
-`Command` is a `data` declaration: nine alternatives and no payload.
-
-```morloc
-data Command = None | Up | Down | Left | Right | Tick | Quit | Save | Continue
-```
-
-The alternative -- `type Command = Int` and nine named integers -- says the
-same thing in a way nothing can check. `step 47` typechecks under it, the
-frontend holds a bare `i64`, and every arm of the engine's `match` is a number
-whose meaning lives in a comment.
-
-Three things follow, and none of them cost anything:
-
-- **A command is one byte on the wire.** The tag is the constructor's position
-  in the declaration, so an ordinal is the representation rather than an
-  encoding of it. A replay script is a byte buffer.
-- **The name travels with the value.** The constructor names ride in the wire
-  schema, so a command renders as `"Quit"` and not `6`, and `--json-help`
-  advertises the closed set to a machine reading the interface.
-- **The engine's `match` is exhaustive.** The Rust `enum` behind the type has
-  the same nine arms, so a tenth command cannot be added without the compiler
-  naming every place that has to answer for it.
-
-Declaration order is part of the wire contract: appending an alternative leaves
-every existing value byte-identical, and reordering breaks them.
-
 ## Levels are plugins
 
 The map for a level is one function:
@@ -109,9 +80,7 @@ right size, symmetric, walled in, a ghost house with a door the ghosts can get
 out of, a tunnel, somewhere for Pac-Man to stand, and every pellet reachable
 from where he starts. The suite checks the generator against *that*, not against
 a picture of one board, so a replacement generator is judged by the same rule
-the current one is. It has already earned its keep: it caught a generated map
-that put a dot on Pac-Man's starting tile but not on its mirror, which no
-eyeball would have noticed.
+the current one is.
 
 How hard a level plays is its own function, of the same shape:
 
@@ -133,24 +102,6 @@ maze looks like, and neither knows what happens when Pac-Man meets a ghost.
 Replace one and you have a plugin; replace them all and you have a different
 game on the same engine.
 
-## What it plays
-
-The arcade first level: the real 28x31 maze, 240 dots and 4 energizers, four
-ghosts with their original targeting (Blinky chases, Pinky aims four tiles
-ahead, Inky takes the doubled vector from Blinky, Clyde breaks off within eight
-tiles), the scatter/chase schedule with its forced reversals, frightened mode,
-the ghost house, and the side tunnel.
-
-Levels after the first keep those rules and change the pace: the ghosts drop
-fewer frames, the house empties sooner, the scatter breaks shorten, and an
-energizer frightens for less until, from the thirteenth board, it only scores.
-
-Deliberately not included: fruit, the arcade's per-ghost dot counters for
-leaving the house (fixed timers instead), and its fractional speed tables (a
-ghost either takes a frame or does not). Nothing is random except which way a
-frightened ghost turns, and that runs off a seed in the game state, so a game
-replays exactly.
-
 ## Playing
 
 ```
@@ -164,6 +115,7 @@ Clearing a board shows a tally and offers `c` to go on to the next level or `q`
 to stop; running out of lives shows the same tally with only `q`. Leaving by `q`
 or `s` skips it; you already know how it went. Score and lives carry across
 levels.
+
 The board is drawn two terminal columns per tile, because a cell is about twice
 as tall as it is wide and a one-column tile looks stretched. Which glyph stands
 for which tile is a frontend decision -- the engine returns a tile map.
@@ -212,10 +164,3 @@ drives the real game under a pseudo-terminal and prints what it drew:
 It is timing-based, so it is a manual check. It is also what caught a saved
 game being stored in its `SAVED` end state, which made resuming land on a
 finished board.
-
-## Findings
-
-`FINDINGS.md` records the compiler bugs this demo ran into. A workaround that
-outlives the bug is marked `FINDINGS #n` at its site; there are none at
-present. `NOTES.md` records the design friction -- the things that were awkward
-rather than wrong.
